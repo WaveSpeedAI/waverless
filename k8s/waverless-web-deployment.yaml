@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waverless-web
+  namespace: wavespeed
+  labels:
+    app: waverless-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: waverless-web
+  template:
+    metadata:
+      labels:
+        app: waverless-web
+    spec:
+      containers:
+      - name: waverless-web
+        image: docker.io/wavespeed/waverless-web:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        env:
+        # Configure backend API address
+        # Default uses waverless-svc in the same namespace
+        - name: API_BACKEND_URL
+          value: "http://waverless-svc:80"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      serviceAccountName: waverless
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waverless-web-svc
+  namespace: wavespeed
+  labels:
+    app: waverless-web
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: waverless-web

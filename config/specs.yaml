@@ -1,0 +1,94 @@
+# Resource specification configuration
+specs:
+  # CPU specifications
+  - name: "cpu-2c4g"
+    displayName: "CPU 2 Cores 4GB"
+    category: "cpu"
+    resources:
+      cpu: "2"
+      memory: "4Gi"
+      disk: "20"
+      ephemeralStorage: "30"
+    platforms:
+      generic:
+        nodeSelector: {}
+        tolerations: []
+        labels: {}
+        annotations: {}
+      aliyun-ack:
+        nodeSelector: {}
+        tolerations: []
+        labels:
+          alibabacloud.com/acs: "true"
+          alibabacloud.com/compute-class: "general-purpose"
+          alibabacloud.com/compute-qos: "default"
+        annotations:
+          k8s.aliyun.com/image-accelerate-mode: "on-demand"
+
+  - name: "cpu-4c8g"
+    displayName: "CPU 4 Cores 8GB"
+    category: "cpu"
+    resources:
+      cpu: "4"
+      memory: "8Gi"
+      disk: "20"
+      ephemeralStorage: "30"
+    platforms:
+      generic:
+        tolerations: []
+        annotations: {}
+      aliyun-ack:
+        tolerations: []
+        annotations:
+          k8s.aliyun.com/image-accelerate-mode: "on-demand"
+        labels:
+          alibabacloud.com/acs: "true"
+          alibabacloud.com/compute-class: "general-purpose"
+          alibabacloud.com/compute-qos: "default"
+
+  - name: "cpu-8c16g"
+    displayName: "CPU 8 Cores 16GB"
+    category: "cpu"
+    resources:
+      cpu: "8"
+      memory: "16Gi"
+      disk: "20"
+      ephemeralStorage: "30"
+    platforms:
+      generic:
+        tolerations: []
+        annotations: {}
+      aliyun-ack:
+        tolerations: []
+        annotations:
+          k8s.aliyun.com/image-accelerate-mode: "on-demand"
+        labels:
+          alibabacloud.com/acs: "true"
+          alibabacloud.com/compute-class: "general-purpose"
+          alibabacloud.com/compute-qos: "default"
+
+  # H200 specifications (production environment)
+  - name: "h200-single"
+    displayName: "H200 1 GPU (10 Cores 100GB)"
+    category: "gpu"
+    resources:
+      gpu: "1"
+      gpuType: "NVIDIA-H200"
+      cpu: "50"
+      memory: "100Gi"
+      disk: "200"
+      ephemeralStorage: "300"
+    platforms:
+      generic:
+        tolerations:
+          - key: "hardware-type/h200"
+            operator: "Equal"
+            value: "gpu"
+            effect: "NoSchedule"
+        annotations: {}
+      aliyun-ack:
+        tolerations:
+          - key: "hardware-type/h200"
+            operator: "Equal"
+            value: "gpu"
+            effect: "NoSchedule"

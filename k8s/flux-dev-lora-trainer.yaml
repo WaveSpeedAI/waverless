@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flux-dev-lora-trainer-fw
+  namespace: wavespeed
+  labels:
+    app: flux-dev-lora-trainer-fw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flux-dev-lora-trainer-fw
+  template:
+    metadata:
+      labels:
+        app: flux-dev-lora-trainer-fw
+      annotations:
+        k8s.aliyun.com/eci-with-eip: "true"
+    spec:
+      nodeSelector:
+        alibabacloud.com/nodepool-id: np7f9505eb439744d293210e341c6702ea
+        kubernetes.io/hostname: e02-sg-nnu4g7fzh01
+      tolerations:
+      - key: "node-role.alibabacloud.com/lingjun"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: flux-dev-lora-trainer
+        image: wavespeed/model-deploy:flux_lora_trainer-cu128-202508300207
+        ports:
+        - containerPort: 8000
+        env:
+        # Waverless configuration
+        - name: RUNPOD_WEBHOOK_GET_JOB
+          value: "http://waverless-svc/runpod/job-take/$ID"
+        - name: RUNPOD_WEBHOOK_PING
+          value: "http://waverless-svc/runpod/ping/$RUNPOD_POD_ID"
+        - name: RUNPOD_POD_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: RUNPOD_PING_INTERVAL
+          value: "10000"
+        - name: RUNPOD_AI_API_KEY
+          value: "dummy"
+        - name: RUNPOD_POD_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        envFrom:
+        - configMapRef:
+            name: wavespeed-config
+        resources:
+          requests:
+            memory: "100Gi"
+            cpu: "10"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "100Gi"
+            cpu: "10"
+            nvidia.com/gpu: 1
+      - name: port-proxy
+        image: alpine/socat:1.8.0.0
+        args: ["-d", "-d", "TCP-LISTEN:8001,fork,reuseaddr,bind=0.0.0.0", "TCP:127.0.0.1:8000"]
+        ports:
+        - containerPort: 8001
+      imagePullSecrets:
+      - name: dockerhub-secret

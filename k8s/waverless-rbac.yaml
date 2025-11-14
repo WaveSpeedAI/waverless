@@ -1,0 +1,64 @@
+# ServiceAccount for Waverless API and Web UI
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: waverless
+  namespace: wavespeed
+  labels:
+    app: waverless
+---
+# Role with permissions to manage Deployments and Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: waverless-manager
+  namespace: wavespeed
+  labels:
+    app: waverless
+rules:
+  # Deployment management
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Service management (for apps that need services)
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Pod management (for logs and status)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+
+  # Pod logs
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # Pod exec (for kubectl exec)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+
+  # ConfigMap read access
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+# RoleBinding to bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: waverless-manager-binding
+  namespace: wavespeed
+  labels:
+    app: waverless
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: waverless-manager
+subjects:
+  - kind: ServiceAccount
+    name: waverless
+    namespace: wavespeed

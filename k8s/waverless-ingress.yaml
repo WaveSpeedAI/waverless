@@ -1,0 +1,68 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: waverless-ingress
+  namespace: wavespeed-test
+  annotations:
+    # NGINX Ingress Controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Uncomment below for CORS support
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+
+    # Timeout settings (for long-running tasks)
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+
+    # Request body size limit (for large file uploads)
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+spec:
+  rules:
+  - host: waverless.ali-inference.wavespeed.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: waverless-svc
+            port:
+              number: 80
+  # Add TLS configuration if HTTPS is needed
+  # tls:
+  # - hosts:
+  #   - waverless.example.com
+  #   secretName: waverless-tls-secret
+---
+# Optional: Create separate Ingress for Web UI
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: waverless-web-ingress
+  namespace: wavespeed-test
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: waverless-web.ali-inference.wavespeed.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: waverless-web-svc
+            port:
+              number: 7860
+  # tls:
+  # - hosts:
+  #   - waverless-web.example.com
+  #   secretName: waverless-web-tls-secret

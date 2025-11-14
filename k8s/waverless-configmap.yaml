@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: waverless-config
+  namespace: wavespeed
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      mode: release
+
+    redis:
+      addr: waverless-redis-svc:6379
+      password: ""
+      db: 0
+
+    queue:
+      concurrency: 10
+      max_retry: 3
+      task_timeout: 3600
+      # Note: Task data is persisted permanently in Redis (no TTL/retention)
+
+    worker:
+      heartbeat_interval: 10
+      heartbeat_timeout: 60
+      default_concurrency: 1
+
+    logger:
+      level: info
+      output: console
+      file:
+        path: /var/log/waverless/app.log
+
+    k8s:
+      enabled: true
+      namespace: wavespeed
+      platform: aliyun-ack
+      config_dir: /app/config
+
+    autoscaler:
+      enabled: true
+      interval: 10
+      max_gpu_count: 8
+      max_cpu_cores: 128
+      max_memory_gb: 512
+      starvation_time: 300
+
+  # Note: specs.yaml and deployment.yaml template are also needed
+  # When using deploy.sh, these files are automatically included via:
+  #   --from-file=specs.yaml=config/specs.yaml
+  #   --from-file=deployment.yaml=config/templates/deployment.yaml
+  #
+  # For manual deployment, add them using:
+  #   kubectl create configmap waverless-config \
+  #     --from-file=config.yaml=<this-file> \
+  #     --from-file=specs.yaml=config/specs.yaml \
+  #     --from-file=deployment.yaml=config/templates/deployment.yaml \
+  #     -n wavespeed

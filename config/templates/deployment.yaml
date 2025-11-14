@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.Endpoint}}
+  namespace: {{.Namespace}}
+  labels:
+    app: {{.Endpoint}}
+    managed-by: waverless
+{{- if or .PlatformLabelsJSON .PlatformAnnotationsJSON}}
+  annotations:
+{{- if .PlatformLabelsJSON}}
+    waverless.io/platform-labels: '{{.PlatformLabelsJSON}}'
+{{- end}}
+{{- if .PlatformAnnotationsJSON}}
+    waverless.io/platform-annotations: '{{.PlatformAnnotationsJSON}}'
+{{- end}}
+{{- end}}
+spec:
+  replicas: {{.Replicas}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0  # Ensure there is always an available Pod
+      maxSurge: 1        # Create at most 1 new Pod at a time, control update speed
+  selector:
+    matchLabels:
+      app: {{.Endpoint}}
+  template:
+    metadata:
+      labels:
+        app: {{.Endpoint}}
+        managed-by: waverless
+{{range $key, $value := .Labels}}
+        {{$key}}: "{{$value}}"
+{{end}}
+{{if .Annotations}}
+      annotations:
+{{range $key, $value := .Annotations}}
+        {{$key}}: "{{$value}}"
+{{end}}
+{{end}}
+    spec:
+{{- if .NodeSelector}}
+      nodeSelector:
+{{- range $key, $value := .NodeSelector}}
+        {{$key}}: "{{$value}}"
+{{- end}}
+{{- end}}
+{{- if .Tolerations}}
+      tolerations:
+{{- range .Tolerations}}
+      - key: "{{.Key}}"
+        operator: "{{.Operator}}"
+{{- if .Value}}
+        value: "{{.Value}}"
+{{- end}}
+        effect: "{{.Effect}}"
+{{- end}}
+{{- end}}
+      containers:
+      - name: {{.ContainerName}}
+        image: {{.Image}}
+        ports:
+        - containerPort: {{.ContainerPort}}
+          protocol: TCP
+        lifecycle:
+          preStop:
+            exec:
+              # Graceful shutdown: Send SIGTERM to trigger worker shutdown
+              # The worker will stop accepting new tasks and wait for current tasks to complete
+              # K8s will wait up to terminationGracePeriodSeconds before sending SIGKILL
+              command:
+                - "/bin/sh"
+                - "-c"
+                - "kill -TERM 1"
+        env:
+        - name: RUNPOD_ENDPOINT_ID
+          value: {{.Endpoint}}
+        - name: RUNPOD_PING_INTERVAL
+          value: "10000"
+        - name: RUNPOD_AI_API_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: wavespeed-config
+              key: RUNPOD_AI_API_KEY
+        - name: RUNPOD_WEBHOOK_GET_JOB
+          value: http://waverless-svc/v2/{{.Endpoint}}/job-take/$ID?
+        - name: RUNPOD_WEBHOOK_PING
+          value: http://waverless-svc/v2/{{.Endpoint}}/ping/$RUNPOD_POD_ID
+        - name: RUNPOD_WEBHOOK_POST_OUTPUT
+          value: http://waverless-svc/v2/{{.Endpoint}}/job-done/$RUNPOD_POD_ID/$ID?
+        - name: RUNPOD_WEBHOOK_JOB_STREAM
+          value: http://waverless-svc/v2/{{.Endpoint}}/job-stream/$RUNPOD_POD_ID/$ID?
+        - name: RUNPOD_POD_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: RUNPOD_POD_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        envFrom:
+        - configMapRef:
+            name: wavespeed-config
+        resources:
+          requests:
+            memory: "{{.MemoryRequest}}"
+{{- if .CpuLimit}}
+            cpu: "{{.CpuLimit}}"
+{{- end}}
+{{- if .IsGpu}}
+            nvidia.com/gpu: {{.GpuCount}}
+{{- end}}
+          limits:
+            memory: "{{.MemoryRequest}}"
+{{- if .CpuLimit}}
+            cpu: "{{.CpuLimit}}"
+{{- end}}
+{{- if .IsGpu}}
+            nvidia.com/gpu: {{.GpuCount}}
+{{- end}}
+      - name: port-proxy
+        image: alpine/socat:1.8.0.0
+        args:
+        - "-d"
+        - "-d"
+        - "TCP-LISTEN:{{.ProxyPort}},fork,reuseaddr,bind=0.0.0.0"
+        - "TCP:127.0.0.1:{{.ContainerPort}}"
+        ports:
+        - containerPort: {{.ProxyPort}}
+          protocol: TCP
+      imagePullSecrets:
+      - name: dockerhub-secret
+      restartPolicy: Always
+      # Termination grace period: Maximum time K8s waits before sending SIGKILL
+      # Formula: Expected task timeout + 30s buffer
+      # - preStop hook sends SIGTERM (instant)
+      # - Worker stops accepting new tasks and waits for current tasks to complete
+      # - After terminationGracePeriodSeconds, K8s sends SIGKILL to force exit
+      # Example: If tasks take up to 5 minutes, set to 330 (300s + 30s buffer)
+{{- if .TerminationGracePeriodSeconds}}
+      terminationGracePeriodSeconds: {{.TerminationGracePeriodSeconds}}
+{{- else}}
+      terminationGracePeriodSeconds: 90  # Default: 60s for idle workers + 30s buffer
+{{- end}}

@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waverless
+  namespace: wavespeed
+  labels:
+    app: waverless
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: waverless
+  template:
+    metadata:
+      labels:
+        app: waverless
+    spec:
+      serviceAccountName: waverless
+      containers:
+      - name: waverless
+        image: docker.io/wavespeed/waverless:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: CONFIG_PATH
+          value: /app/config/config.yaml
+        - name: K8S_ENABLED
+          value: "true"
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: K8S_PLATFORM
+          value: "aliyun-ack"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: waverless-config
+          items:
+          - key: config.yaml
+            path: config.yaml
+          - key: specs.yaml
+            path: specs.yaml
+          - key: deployment.yaml
+            path: templates/deployment.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waverless-svc
+  namespace: wavespeed
+  labels:
+    app: waverless
+spec:
+  selector:
+    app: waverless
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  type: ClusterIP

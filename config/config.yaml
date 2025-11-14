@@ -1,0 +1,60 @@
+server:
+  port: 8080
+  mode: debug  # debug or release
+  api_key: test
+
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 2
+
+
+mysql:
+  host: 127.0.0.1
+  port: 63938
+  user: wavespeed
+  password: wavespeed&123!
+  database: waverless
+queue:
+  concurrency: 10
+  max_retry: 3
+  task_timeout: 3600      # Task execution timeout (seconds) - global default, can be overridden per endpoint
+  task_retention: 86400   # Task data retention time (seconds)
+
+worker:
+  heartbeat_interval: 10   # Worker heartbeat interval (seconds)
+  heartbeat_timeout: 60    # Worker heartbeat timeout (seconds) - also used as cleanup interval
+  default_concurrency: 1   # Default worker concurrency
+
+# Task Recovery Mechanism:
+# 1. Worker Offline Recovery (Primary): When a worker misses heartbeat for 60s,
+#    all its in-progress tasks are automatically re-enqueued
+# 2. Task Timeout (Fallback): Tasks running longer than task_timeout (default 3600s)
+#    will be failed (future enhancement)
+# 3. Per-Endpoint Timeout: Each endpoint can specify its own task_timeout in metadata
+
+logger:
+  level: info             # Log level: debug, info, warn, error
+  output: both          # Output mode: console, file, both
+  file:
+    path: /tmp/log/waverless/app.log
+
+k8s:
+  enabled: true                  # Enable K8s functionality
+  namespace: wavespeed-test           # K8s namespace
+  platform: aliyun-ack           # Platform type: generic, aliyun-ack, aws-eks
+  config_dir: ./config           # Configuration directory (contains specs.yaml and templates/)
+
+autoscaler:
+  enabled: true                 # Enable autoscaling
+  interval: 10                   # Control loop interval (seconds)
+  max_gpu_count: 3               # Total cluster GPU count
+  max_cpu_cores: 1000000             # Total cluster CPU cores
+  max_memory_gb: 1000000             # Total cluster memory (GB)
+  starvation_time: 300           # Starvation time threshold (seconds), temporarily elevate priority if resources are not allocated after this time
+
+# Storage providers configuration
+providers:
+  metadata: mysql               # Metadata storage: mysql (persistent), redis (ephemeral)
+  # MySQL stores: endpoints, tasks, autoscaler configs, scaling events
+  # Redis stores: worker heartbeats, task queues, distributed locks, cache

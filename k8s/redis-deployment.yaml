@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waverless-redis
+  namespace: wavespeed
+  labels:
+    app: waverless-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: waverless-redis
+  template:
+    metadata:
+      labels:
+        app: waverless-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waverless-redis-svc
+  namespace: wavespeed
+  labels:
+    app: waverless-redis
+spec:
+  selector:
+    app: waverless-redis
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+  type: ClusterIP

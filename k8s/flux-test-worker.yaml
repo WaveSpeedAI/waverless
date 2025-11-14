@@ -1,0 +1,59 @@
+# Single test Worker connecting to local Waverless
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flux-test-worker
+  namespace: wavespeed
+  labels:
+    app: flux-test-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flux-test-worker
+  template:
+    metadata:
+      labels:
+        app: flux-test-worker
+      annotations:
+        k8s.aliyun.com/eci-with-eip: "true"
+    spec:
+      nodeSelector:
+        alibabacloud.com/nodepool-id: np7f9505eb439744d293210e341c6702ea
+        kubernetes.io/hostname: e02-sg-nnu4g7fzh01
+      tolerations:
+      - key: "node-role.alibabacloud.com/lingjun"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: flux-worker
+        image: wavespeed/model-deploy:flux_lora_trainer-cu128-202508300207
+        ports:
+        - containerPort: 8000
+        env:
+        # Waverless configuration - pointing to local (requires local IP)
+        # In k8s environment, need to use accessible external IP
+        - name: RUNPOD_WEBHOOK_GET_JOB
+          value: "http://YOUR_LOCAL_IP:8080/runpod/job-take/$ID"
+        - name: RUNPOD_WEBHOOK_PING
+          value: "http://YOUR_LOCAL_IP:8080/runpod/ping/$ID"
+        - name: RUNPOD_POD_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: RUNPOD_PING_INTERVAL
+          value: "10000"
+        envFrom:
+        - configMapRef:
+            name: wavespeed-config
+        resources:
+          requests:
+            memory: "100Gi"
+            cpu: "10"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "100Gi"
+            cpu: "10"
+            nvidia.com/gpu: 1
+      imagePullSecrets:
+      - name: dockerhub-secret

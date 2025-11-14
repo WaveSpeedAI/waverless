@@ -1,0 +1,47 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+waverless
+waverless-linux
+__debug_bin*
+config.local.yaml
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+
+# Config
+config/local.yaml
+*.log
+
+# Output
+output/
+tmp/
+node_modules/
+
+# Frontend files should only be in web-ui/
+/package.json
+/package-lock.json
+/pnpm-lock.yaml
+/yarn.lock

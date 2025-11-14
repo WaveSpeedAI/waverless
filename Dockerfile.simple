@@ -1,0 +1,15 @@
+FROM --platform=linux/amd64 alpine:latest
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+
+# Copy pre-compiled binary (Linux version)
+COPY waverless-linux ./waverless
+COPY config ./config
+
+# Expose port
+EXPOSE 8080
+
+# Run
+CMD ["./waverless"]
