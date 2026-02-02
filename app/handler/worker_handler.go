@@ -9,6 +9,8 @@ import (
 	"waverless/internal/service"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/status"
+	mysqlModel "waverless/pkg/store/mysql/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +31,7 @@ func NewWorkerHandler(workerService *service.WorkerService, taskService *service
 	}
 }
 
-// WorkerWithPodInfo Worker 信息（包含 Pod 状态）
+// WorkerWithPodInfo Worker info (includes Pod status)
 type WorkerWithPodInfo struct {
 	model.Worker
 	PodPhase          string `json:"podPhase,omitempty"`          // Pod phase: Pending, Running, Succeeded, Failed
@@ -42,6 +44,11 @@ type WorkerWithPodInfo struct {
 	PodStartedAt      string `json:"podStartedAt,omitempty"`      // Pod start time
 	PodRestartCount   int32  `json:"podRestartCount,omitempty"`   // Container restart count
 	DeletionTimestamp string `json:"deletionTimestamp,omitempty"` // Set when pod is terminating
+
+	// Failure information fields (Requirements 6.1, 6.2)
+	FailureType       string `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
+	FailureReason     string `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
+	FailureSuggestion string `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
 }
 
 // Heartbeat handles worker heartbeat (compatible with runpod ping interface)
@@ -232,12 +239,26 @@ func (h *WorkerHandler) GetWorkerList(c *gin.Context) {
 	ctx := c.Request.Context()
 	endpoint := c.Query("endpoint")
 
-	// Get all workers from Redis
+	// Get all workers from MySQL (includes failure fields)
+	mysqlWorkers, err := h.workerService.ListWorkersWithPodInfo(ctx, endpoint)
+	if err != nil {
+		logger.ErrorCtx(ctx, "failed to get worker list: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Also get domain workers for the response
 	workers, err := h.workerService.ListWorkers(ctx, endpoint)
 	if err != nil {
 		logger.ErrorCtx(ctx, "failed to get worker list: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Create a map from workerID to MySQL worker for failure info lookup
+	mysqlWorkerByID := make(map[string]*mysqlModel.Worker)
+	for _, mw := range mysqlWorkers {
+		mysqlWorkerByID[mw.WorkerID] = mw
 	}
 
 	// Get all endpoints to query their pods
@@ -287,6 +308,14 @@ func (h *WorkerHandler) GetWorkerList(c *gin.Context) {
 	for _, worker := range workers {
 		workerWithPod := WorkerWithPodInfo{
 			Worker: *worker,
+		}
+
+		// Add failure information from MySQL worker (Requirements 6.1, 6.2)
+		if mw, exists := mysqlWorkerByID[worker.ID]; exists && mw.FailureType != "" {
+			workerWithPod.FailureType = mw.FailureType
+			workerWithPod.FailureReason = mw.FailureReason
+			// Get suggestion from failure reason if available
+			workerWithPod.FailureSuggestion = getFailureSuggestion(mw.FailureType, mw.FailureReason)
 		}
 
 		if worker.PodName != "" {
@@ -405,13 +434,40 @@ func (h *WorkerHandler) GetWorkerYAML(c *gin.Context) {
 	c.String(http.StatusOK, yamlData)
 }
 
+// WorkerDetailResponse represents the response for worker detail API
+// Includes failure information for Requirements 6.1, 6.2
+type WorkerDetailResponse struct {
+	ID                   int64   `json:"id"`
+	WorkerID             string  `json:"workerId"`
+	Endpoint             string  `json:"endpoint"`
+	PodName              string  `json:"podName,omitempty"`
+	Status               string  `json:"status"`
+	Concurrency          int     `json:"concurrency"`
+	CurrentJobs          int     `json:"currentJobs"`
+	Version              string  `json:"version,omitempty"`
+	LastHeartbeat        string  `json:"lastHeartbeat"`
+	TotalTasksCompleted  int64   `json:"totalTasksCompleted"`
+	TotalTasksFailed     int64   `json:"totalTasksFailed"`
+	TotalExecutionTimeMs int64   `json:"totalExecutionTimeMs"`
+	CreatedAt            string  `json:"createdAt"`
+	UpdatedAt            string  `json:"updatedAt"`
+	TerminatedAt         *string `json:"terminatedAt,omitempty"`
+	PodStartedAt         *string `json:"podStartedAt,omitempty"`
+
+	// Failure information fields (Requirements 6.1, 6.2)
+	FailureType       string  `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
+	FailureReason     string  `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
+	FailureSuggestion string  `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
+	FailureOccurredAt *string `json:"failureOccurredAt,omitempty"` // Timestamp when failure was detected
+}
+
 // GetWorkerByID gets worker detail by worker ID
 // @Summary Get worker detail by worker ID
 // @Description Get worker detail by worker ID (e.g., "worker-abc123")
 // @Tags worker
 // @Produce json
 // @Param id path string true "Worker ID"
-// @Success 200 {object} model.Worker
+// @Success 200 {object} WorkerDetailResponse
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/workers/:id [get]
 func (h *WorkerHandler) GetWorkerByID(c *gin.Context) {
@@ -424,5 +480,58 @@ func (h *WorkerHandler) GetWorkerByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, worker)
+	// Build response with failure information (Requirements 6.1, 6.2)
+	response := WorkerDetailResponse{
+		ID:                   worker.ID,
+		WorkerID:             worker.WorkerID,
+		Endpoint:             worker.Endpoint,
+		PodName:              worker.PodName,
+		Status:               worker.Status,
+		Concurrency:          worker.Concurrency,
+		CurrentJobs:          worker.CurrentJobs,
+		Version:              worker.Version,
+		LastHeartbeat:        worker.LastHeartbeat.Format("2006-01-02T15:04:05Z07:00"),
+		TotalTasksCompleted:  worker.TotalTasksCompleted,
+		TotalTasksFailed:     worker.TotalTasksFailed,
+		TotalExecutionTimeMs: worker.TotalExecutionTimeMs,
+		CreatedAt:            worker.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:            worker.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+
+	// Add terminated timestamp if available
+	if worker.TerminatedAt != nil {
+		terminatedAt := worker.TerminatedAt.Format("2006-01-02T15:04:05Z07:00")
+		response.TerminatedAt = &terminatedAt
+	}
+
+	// Add pod started timestamp if available
+	if worker.PodStartedAt != nil {
+		podStartedAt := worker.PodStartedAt.Format("2006-01-02T15:04:05Z07:00")
+		response.PodStartedAt = &podStartedAt
+	}
+
+	// Add failure information if available
+	if worker.FailureType != "" {
+		response.FailureType = worker.FailureType
+		response.FailureReason = worker.FailureReason
+		response.FailureSuggestion = getFailureSuggestion(worker.FailureType, worker.FailureReason)
+
+		if worker.FailureOccurredAt != nil {
+			failureOccurredAt := worker.FailureOccurredAt.Format("2006-01-02T15:04:05Z07:00")
+			response.FailureOccurredAt = &failureOccurredAt
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// getFailureSuggestion returns an actionable suggestion based on failure type and reason
+// Uses the status sanitizer to get user-friendly suggestions
+func getFailureSuggestion(failureType, failureReason string) string {
+	sanitizer := status.NewStatusSanitizer()
+	sanitized := sanitizer.Sanitize(interfaces.FailureType(failureType), failureReason, "")
+	if sanitized != nil {
+		return sanitized.Suggestion
+	}
+	return ""
 }

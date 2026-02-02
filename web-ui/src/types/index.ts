@@ -46,6 +46,9 @@ export interface AppInfo {
   shmSize?: string; // Shared memory size from deployment
   volumeMounts?: VolumeMount[]; // PVC volume mounts from deployment
   enablePtrace?: boolean; // Enable SYS_PTRACE capability for debugging
+  // Health status fields
+  healthStatus?: string; // HEALTHY, DEGRADED, UNHEALTHY
+  healthMessage?: string; // User-friendly health message
 }
 
 export interface SpecInfo {
@@ -270,6 +273,11 @@ export interface WorkerWithPodInfo extends Worker {
   podStartedAt?: string;
   podRestartCount?: number;
   deletionTimestamp?: string; // Set when pod is terminating
+  // Failure information (camelCase to match backend JSON)
+  failureType?: string; // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, etc.
+  failureReason?: string; // User-friendly failure message
+  failureSuggestion?: string; // Suggested action to fix the issue
+  failureOccurredAt?: string; // When the failure occurred
 }
 
 // Pod Detail (kubectl describe-like)

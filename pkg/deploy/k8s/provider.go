@@ -13,12 +13,12 @@ import (
 	"waverless/pkg/interfaces"
 )
 
-// K8sDeploymentProvider K8s部署提供者实现
+// K8sDeploymentProvider K8s deployment provider implementation
 type K8sDeploymentProvider struct {
 	manager *Manager
 }
 
-// NewK8sDeploymentProvider 创建K8s部署提供者
+// NewK8sDeploymentProvider creates a K8s deployment provider
 func NewK8sDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvider, error) {
 	if !cfg.K8s.Enabled {
 		return nil, fmt.Errorf("k8s is not enabled in config")
@@ -64,7 +64,7 @@ func NewK8sDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvider
 	}, nil
 }
 
-// Deploy 部署应用
+// Deploy deploys an application
 func (p *K8sDeploymentProvider) Deploy(ctx context.Context, req *interfaces.DeployRequest) (*interfaces.DeployResponse, error) {
 	// Convert to DeployAppRequest
 	k8sReq := &DeployAppRequest{
@@ -97,7 +97,7 @@ func (p *K8sDeploymentProvider) Deploy(ctx context.Context, req *interfaces.Depl
 	}, nil
 }
 
-// GetApp 获取应用详情
+// GetApp gets application details
 func (p *K8sDeploymentProvider) GetApp(ctx context.Context, endpoint string) (*interfaces.AppInfo, error) {
 	app, err := p.manager.GetApp(ctx, endpoint)
 	if err != nil {
@@ -121,14 +121,14 @@ func (p *K8sDeploymentProvider) GetApp(ctx context.Context, endpoint string) (*i
 	}, nil
 }
 
-// ListApps 列出所有应用
+// ListApps lists all applications
 func (p *K8sDeploymentProvider) ListApps(ctx context.Context) ([]*interfaces.AppInfo, error) {
 	apps, err := p.manager.ListApps(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to interfaces.AppInfo 列表
+	// Convert to interfaces.AppInfo list
 	result := make([]*interfaces.AppInfo, 0, len(apps))
 	for _, app := range apps {
 		result = append(result, &interfaces.AppInfo{
@@ -150,22 +150,22 @@ func (p *K8sDeploymentProvider) ListApps(ctx context.Context) ([]*interfaces.App
 	return result, nil
 }
 
-// DeleteApp 删除应用
+// DeleteApp deletes an application
 func (p *K8sDeploymentProvider) DeleteApp(ctx context.Context, endpoint string) error {
 	return p.manager.DeleteApp(ctx, endpoint)
 }
 
-// GetAppLogs 获取应用日志
+// GetAppLogs gets application logs
 func (p *K8sDeploymentProvider) GetAppLogs(ctx context.Context, endpoint string, lines int, podName ...string) (string, error) {
 	return p.manager.GetAppLogs(ctx, endpoint, int64(lines), podName...)
 }
 
-// ScaleApp 扩缩容应用
+// ScaleApp scales an application
 func (p *K8sDeploymentProvider) ScaleApp(ctx context.Context, endpoint string, replicas int) error {
 	return p.manager.ScaleDeployment(ctx, endpoint, replicas)
 }
 
-// GetAppStatus 获取应用状态
+// GetAppStatus gets application status
 func (p *K8sDeploymentProvider) GetAppStatus(ctx context.Context, endpoint string) (*interfaces.AppStatus, error) {
 	app, err := p.manager.GetApp(ctx, endpoint)
 	if err != nil {
@@ -182,7 +182,7 @@ func (p *K8sDeploymentProvider) GetAppStatus(ctx context.Context, endpoint strin
 	}, nil
 }
 
-// ListSpecs 列出可用规格
+// ListSpecs lists available specs
 func (p *K8sDeploymentProvider) ListSpecs(ctx context.Context) ([]*interfaces.SpecInfo, error) {
 	specs := p.manager.ListSpecs()
 
@@ -214,7 +214,7 @@ func (p *K8sDeploymentProvider) ListSpecs(ctx context.Context) ([]*interfaces.Sp
 	return result, nil
 }
 
-// ListSpecsWithCapacity 列出可用规格（带容量状态）
+// ListSpecsWithCapacity lists available specs with capacity status
 func (p *K8sDeploymentProvider) ListSpecsWithCapacity(ctx context.Context) ([]*interfaces.SpecWithCapacity, error) {
 	specs := p.manager.ListSpecs()
 	result := make([]*interfaces.SpecWithCapacity, len(specs))
@@ -243,7 +243,7 @@ func (p *K8sDeploymentProvider) ListSpecsWithCapacity(ctx context.Context) ([]*i
 	return result, nil
 }
 
-// GetSpec 获取规格详情
+// GetSpec gets spec details
 func (p *K8sDeploymentProvider) GetSpec(ctx context.Context, specName string) (*interfaces.SpecInfo, error) {
 	spec, err := p.manager.GetSpec(specName)
 	if err != nil {
@@ -271,7 +271,7 @@ func (p *K8sDeploymentProvider) GetSpec(ctx context.Context, specName string) (*
 	}, nil
 }
 
-// PreviewDeploymentYAML 预览部署配置
+// PreviewDeploymentYAML previews deployment configuration
 func (p *K8sDeploymentProvider) PreviewDeploymentYAML(ctx context.Context, req *interfaces.DeployRequest) (string, error) {
 	// Convert to DeployAppRequest
 	k8sReq := &DeployAppRequest{
@@ -289,7 +289,7 @@ func (p *K8sDeploymentProvider) PreviewDeploymentYAML(ctx context.Context, req *
 	return p.manager.PreviewYAML(k8sReq)
 }
 
-// UpdateDeployment 更新部署
+// UpdateDeployment updates deployment
 func (p *K8sDeploymentProvider) UpdateDeployment(ctx context.Context, req *interfaces.UpdateDeploymentRequest) (*interfaces.DeployResponse, error) {
 	if err := p.manager.UpdateDeployment(ctx, req.Endpoint, req.SpecName, req.Image, req.Replicas, req.VolumeMounts, req.ShmSize, req.EnablePtrace, req.Env); err != nil {
 		return nil, err
@@ -302,32 +302,32 @@ func (p *K8sDeploymentProvider) UpdateDeployment(ctx context.Context, req *inter
 	}, nil
 }
 
-// GetSpecManager 获取规格管理器（用于自动扩缩容）
+// GetSpecManager gets spec manager (for autoscaling)
 func (p *K8sDeploymentProvider) GetSpecManager() *SpecManager {
 	return p.manager.specManager
 }
 
-// GetDynamicClient 获取 dynamic client（用于 CRD 操作）
+// GetDynamicClient gets dynamic client (for CRD operations)
 func (p *K8sDeploymentProvider) GetDynamicClient() dynamic.Interface {
 	return p.manager.GetDynamicClient()
 }
 
-// GetPodCountsBySpec 按 spec 统计 Pod 数量
+// GetPodCountsBySpec counts Pods by spec
 func (p *K8sDeploymentProvider) GetPodCountsBySpec(ctx context.Context) (map[string]PodCounts, error) {
 	return p.manager.GetPodCountsBySpec(ctx)
 }
 
-// GetInstanceTypesFromNodePool 从 NodePool 获取 instance types
+// GetInstanceTypesFromNodePool gets instance types from NodePool
 func (p *K8sDeploymentProvider) GetInstanceTypesFromNodePool(ctx context.Context, nodePoolName string) ([]string, error) {
 	return p.manager.GetInstanceTypesFromNodePool(ctx, nodePoolName)
 }
 
-// GetDefaultEnv 获取默认环境变量（从 wavespeed-config ConfigMap 读取）
+// GetDefaultEnv gets default environment variables (from wavespeed-config ConfigMap)
 func (p *K8sDeploymentProvider) GetDefaultEnv(ctx context.Context) (map[string]string, error) {
 	return p.manager.GetDefaultEnvFromConfigMap(ctx)
 }
 
-// IsPodDraining 检查Pod是否正在排空
+// IsPodDraining checks if Pod is draining
 func (p *K8sDeploymentProvider) IsPodDraining(ctx context.Context, podName string) (bool, error) {
 	return p.manager.IsPodDraining(ctx, podName)
 }
@@ -550,6 +550,12 @@ func (p *K8sDeploymentProvider) Close() {
 	}
 }
 
+// GetManager returns the underlying K8s manager.
+// This is used by the worker status monitor to access pod watching capabilities.
+func (p *K8sDeploymentProvider) GetManager() *Manager {
+	return p.manager
+}
+
 // GetRestConfig returns the Kubernetes REST config for exec/attach operations
 func (p *K8sDeploymentProvider) GetRestConfig() *rest.Config {
 	if p.manager == nil {
@@ -574,7 +580,7 @@ func (p *K8sDeploymentProvider) GetClientset() kubernetes.Interface {
 	return p.manager.client
 }
 
-// GetPods 获取指定 endpoint 的所有 Pod 信息（包括 Pending、Running、Terminating）
+// GetPods gets all Pod info for specified endpoint (including Pending, Running, Terminating)
 func (p *K8sDeploymentProvider) GetPods(ctx context.Context, endpoint string) ([]*interfaces.PodInfo, error) {
 	if p.manager == nil {
 		return nil, fmt.Errorf("k8s manager not initialized")
@@ -582,7 +588,7 @@ func (p *K8sDeploymentProvider) GetPods(ctx context.Context, endpoint string) ([
 	return p.manager.GetPods(ctx, endpoint)
 }
 
-// DescribePod 获取 Pod 的详细信息（类似 kubectl describe）
+// DescribePod gets detailed Pod info (similar to kubectl describe)
 func (p *K8sDeploymentProvider) DescribePod(ctx context.Context, endpoint string, podName string) (*interfaces.PodDetail, error) {
 	if p.manager == nil {
 		return nil, fmt.Errorf("k8s manager not initialized")
@@ -590,7 +596,7 @@ func (p *K8sDeploymentProvider) DescribePod(ctx context.Context, endpoint string
 	return p.manager.DescribePod(ctx, endpoint, podName)
 }
 
-// GetPodYAML 获取 Pod 的 YAML（类似 kubectl get pod -o yaml）
+// GetPodYAML gets Pod YAML (similar to kubectl get pod -o yaml)
 func (p *K8sDeploymentProvider) GetPodYAML(ctx context.Context, endpoint string, podName string) (string, error) {
 	if p.manager == nil {
 		return "", fmt.Errorf("k8s manager not initialized")
@@ -604,4 +610,22 @@ func (p *K8sDeploymentProvider) ListPVCs(ctx context.Context) ([]*interfaces.PVC
 		return nil, fmt.Errorf("k8s manager not initialized")
 	}
 	return p.manager.ListPVCs(ctx)
+}
+
+// TerminateWorker terminates a specific worker (pod) due to failure.
+// This implements the WorkerTerminator interface for resource release.
+// It is called by ResourceReleaser when a worker exceeds the image pull timeout.
+func (p *K8sDeploymentProvider) TerminateWorker(ctx context.Context, endpoint, workerID, reason string) error {
+	if p.manager == nil {
+		return fmt.Errorf("k8s manager not initialized")
+	}
+
+	// workerID is typically the pod name
+	// First try graceful deletion, then force delete if needed
+	err := p.manager.DeletePod(ctx, workerID)
+	if err != nil {
+		// If graceful delete fails, try force delete
+		return p.manager.ForceDeletePod(ctx, workerID)
+	}
+	return nil
 }

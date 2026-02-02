@@ -59,10 +59,11 @@ func NewManager(
 	scalingEventRepo *mysql.ScalingEventRepository,
 	redisClient *redis.Client,
 	specManager *k8s.SpecManager,
+	endpointRepo *mysql.EndpointRepository,
 ) *Manager {
 	resourceCalculator := NewResourceCalculator(deploymentProvider, endpointService, specManager)
 	decisionEngine := NewDecisionEngine(config, resourceCalculator)
-	executor := NewExecutor(deploymentProvider, endpointService, scalingEventRepo, workerLister, taskRepo)
+	executor := NewExecutor(deploymentProvider, endpointService, scalingEventRepo, workerLister, taskRepo, endpointRepo)
 	metricsCollector := NewMetricsCollector(deploymentProvider, endpointService, workerLister, taskRepo)
 
 	// 创建分布式锁（如果 redisClient 为 nil，锁会自动降级为单实例模式）

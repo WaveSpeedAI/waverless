@@ -134,6 +134,24 @@ const EndpointsPage = () => {
     }
   };
 
+  const getHealthStatusClass = (healthStatus: string) => {
+    switch (healthStatus) {
+      case 'HEALTHY': return 'success';
+      case 'DEGRADED': return 'pending';
+      case 'UNHEALTHY': return 'failed';
+      default: return '';
+    }
+  };
+
+  const getHealthStatusIcon = (healthStatus: string) => {
+    switch (healthStatus) {
+      case 'HEALTHY': return '✓';
+      case 'DEGRADED': return '⚠';
+      case 'UNHEALTHY': return '✗';
+      default: return '';
+    }
+  };
+
   const renderClusterResources = () => {
     if (!clusterStatus?.clusterResources) return null;
     const { clusterResources } = clusterStatus;
@@ -262,6 +280,7 @@ const EndpointsPage = () => {
                 <th>Spec</th>
                 <th>Replicas</th>
                 <th>Status</th>
+                <th>Health</th>
                 <th>Image</th>
                 <th>Created</th>
                 <th style={{ width: 100 }}>Actions</th>
@@ -283,6 +302,15 @@ const EndpointsPage = () => {
                   <td>{ep.readyReplicas || 0} / {ep.replicas || 0}</td>
                   <td>
                     <span className={`tag ${getStatusClass(ep.status)}`}>{ep.status}</span>
+                  </td>
+                  <td>
+                    {ep.healthStatus && (
+                      <Tooltip title={ep.healthMessage || ''}>
+                        <span className={`tag ${getHealthStatusClass(ep.healthStatus)}`}>
+                          {getHealthStatusIcon(ep.healthStatus)} {ep.healthStatus}
+                        </span>
+                      </Tooltip>
+                    )}
                   </td>
                   <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {ep.image}
@@ -324,7 +352,7 @@ const EndpointsPage = () => {
               ))}
               {filteredEndpoints.length === 0 && (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className="empty-state">
                       <ThunderboltOutlined style={{ fontSize: 48, opacity: 0.3 }} />
                       <p>No endpoints found</p>

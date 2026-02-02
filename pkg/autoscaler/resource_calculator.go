@@ -12,14 +12,14 @@ import (
 	"waverless/pkg/logger"
 )
 
-// ResourceCalculator 资源计算器
+// ResourceCalculator resource calculator
 type ResourceCalculator struct {
 	deploymentProvider interfaces.DeploymentProvider
 	endpointService    *endpointsvc.Service
 	specManager        *k8s.SpecManager
 }
 
-// NewResourceCalculator 创建资源计算器
+// NewResourceCalculator creates a resource calculator
 func NewResourceCalculator(deploymentProvider interfaces.DeploymentProvider, endpointService *endpointsvc.Service, specManager *k8s.SpecManager) *ResourceCalculator {
 	return &ResourceCalculator{
 		deploymentProvider: deploymentProvider,
@@ -28,7 +28,7 @@ func NewResourceCalculator(deploymentProvider interfaces.DeploymentProvider, end
 	}
 }
 
-// CalculateEndpointResource 计算单个 Endpoint 需要的资源
+// CalculateEndpointResource calculates resources needed for a single Endpoint
 // OPTIMIZATION: Accept specName parameter to avoid re-querying metadata
 func (c *ResourceCalculator) CalculateEndpointResource(ctx context.Context, endpoint *EndpointConfig, replicas int) (*Resources, error) {
 	// Use SpecName from EndpointConfig to avoid redundant metadata query
@@ -42,13 +42,13 @@ func (c *ResourceCalculator) CalculateEndpointResource(ctx context.Context, endp
 		specName = meta.SpecName
 	}
 
-	// 获取 spec
+	// Get spec
 	spec, err := c.specManager.GetSpec(specName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get spec %s: %w", specName, err)
 	}
 
-	// 解析资源需求
+	// Parse resource requirements
 	resources := &Resources{}
 
 	// GPU
@@ -82,7 +82,7 @@ func (c *ResourceCalculator) CalculateEndpointResource(ctx context.Context, endp
 	return resources, nil
 }
 
-// CalculateClusterResources 计算集群资源使用情况
+// CalculateClusterResources calculates cluster resource usage
 func (c *ResourceCalculator) CalculateClusterResources(ctx context.Context, endpoints []*EndpointConfig, maxResources *Resources) (*ClusterResources, error) {
 	cluster := &ClusterResources{
 		Total:     *maxResources,
@@ -91,7 +91,7 @@ func (c *ResourceCalculator) CalculateClusterResources(ctx context.Context, endp
 		BySpec:    make(map[string]Resources),
 	}
 
-	// 计算每个 endpoint 使用的资源
+	// Calculate resources used by each endpoint
 	// OPTIMIZATION: Use SpecName from EndpointConfig instead of re-querying metadata
 	for _, ep := range endpoints {
 		if ep.ActualReplicas == 0 {
@@ -106,7 +106,7 @@ func (c *ResourceCalculator) CalculateClusterResources(ctx context.Context, endp
 
 		cluster.Used.Add(resources)
 
-		// 按 spec 分类 - use SpecName from EndpointConfig
+		// Categorize by spec - use SpecName from EndpointConfig
 		if ep.SpecName != "" {
 			if _, ok := cluster.BySpec[ep.SpecName]; !ok {
 				cluster.BySpec[ep.SpecName] = Resources{}

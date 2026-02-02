@@ -23,13 +23,13 @@ var nodeClaimGVR = schema.GroupVersionResource{
 	Resource: "nodeclaims",
 }
 
-// KarpenterProvider 通过 watch NodeClaim + 主动轮询感知容量
+// KarpenterProvider watches NodeClaim + active polling for capacity awareness
 type KarpenterProvider struct {
 	client         dynamic.Interface
 	nodePoolToSpec map[string]string // nodepool name -> spec name
 	pollInterval   time.Duration
 
-	// 缓存最近的失败状态
+	// Cache recent failure status
 	failureCache   map[string]time.Time // spec -> last failure time
 	failureCacheMu sync.RWMutex
 }
@@ -58,23 +58,23 @@ func (p *KarpenterProvider) Watch(ctx context.Context, callback func(interfaces.
 		},
 	})
 
-	// 启动 informer
+	// Start informer
 	factory.Start(ctx.Done())
 	factory.WaitForCacheSync(ctx.Done())
 
-	// 同时启动主动轮询
+	// Also start active polling
 	go p.startPolling(ctx, callback)
 
 	<-ctx.Done()
 	return nil
 }
 
-// startPolling 主动轮询检查所有 NodeClaim 状态
+// startPolling actively polls all NodeClaim status
 func (p *KarpenterProvider) startPolling(ctx context.Context, callback func(interfaces.CapacityEvent)) {
 	ticker := time.NewTicker(p.pollInterval)
 	defer ticker.Stop()
 
-	// 首次立即执行一次
+	// Execute immediately on first run
 	p.pollAllNodeClaims(ctx, callback)
 
 	for {
@@ -87,7 +87,7 @@ func (p *KarpenterProvider) startPolling(ctx context.Context, callback func(inte
 	}
 }
 
-// pollAllNodeClaims 轮询所有 NodeClaim 状态
+// pollAllNodeClaims polls all NodeClaim status
 func (p *KarpenterProvider) pollAllNodeClaims(ctx context.Context, callback func(interfaces.CapacityEvent)) {
 	events, err := p.CheckAll(ctx)
 	if err != nil {
@@ -99,11 +99,11 @@ func (p *KarpenterProvider) pollAllNodeClaims(ctx context.Context, callback func
 		callback(event)
 	}
 
-	// 检查长时间没有成功的 spec，可能需要恢复
+	// Check specs that haven't succeeded for a long time, may need recovery
 	p.checkRecovery(ctx, callback)
 }
 
-// checkRecovery 检查是否有 spec 可以恢复为 available
+// checkRecovery checks if any spec can be recovered to available
 func (p *KarpenterProvider) checkRecovery(ctx context.Context, callback func(interfaces.CapacityEvent)) {
 	p.failureCacheMu.RLock()
 	defer p.failureCacheMu.RUnlock()
@@ -126,7 +126,7 @@ func (p *KarpenterProvider) checkRecovery(ctx context.Context, callback func(int
 	}
 }
 
-// hasRunningNodeClaim 检查某个 spec 是否有运行中的 NodeClaim
+// hasRunningNodeClaim checks if a spec has running NodeClaim
 func (p *KarpenterProvider) hasRunningNodeClaim(ctx context.Context, specName string) (bool, error) {
 	var nodePool string
 	for np, spec := range p.nodePoolToSpec {

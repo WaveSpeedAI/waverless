@@ -19,6 +19,10 @@ type ScalingStatus struct {
 	LastScaleTime   time.Time `json:"lastScaleTime"`
 }
 
+// ErrEndpointBlockedDueToImageFailure is returned when an endpoint is blocked from scaling
+// due to image-related failures.
+var ErrEndpointBlockedDueToImageFailure = fmt.Errorf("endpoint is blocked due to image failure")
+
 // ScalerManager coordinates scale operations with the deployment provider.
 type ScalerManager struct {
 	provider             interfaces.DeploymentProvider
@@ -40,10 +44,24 @@ func NewScalerManager(
 }
 
 // ScaleUp increases replicas by delta.
+// Returns ErrEndpointBlockedDueToImageFailure if the endpoint is blocked due to image issues.
+// Validates: Requirements 5.5
 func (m *ScalerManager) ScaleUp(ctx context.Context, name string, delta int) error {
 	if delta <= 0 {
 		return fmt.Errorf("scale up delta must be positive")
 	}
+
+	// Check if endpoint is blocked due to image failure (Property 8: Failed Endpoint Prevents New Pods)
+	if m.endpointRepo != nil {
+		blocked, reason, err := m.endpointRepo.IsBlockedDueToImageFailure(ctx, name)
+		if err != nil {
+			// Log warning but continue (fail-open for availability)
+			// In production, we prefer availability over strict enforcement
+		} else if blocked {
+			return fmt.Errorf("%w: %s - please update the image configuration", ErrEndpointBlockedDueToImageFailure, reason)
+		}
+	}
+
 	return m.scaleTo(ctx, name, func(current int) int { return current + delta })
 }
 

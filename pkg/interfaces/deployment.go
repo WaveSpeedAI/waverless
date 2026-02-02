@@ -94,17 +94,18 @@ type VolumeMount struct {
 
 // DeployRequest deployment request
 type DeployRequest struct {
-	Endpoint           string              `json:"endpoint"`               // Application name/endpoint
-	SpecName           string              `json:"specName"`               // Spec name
-	Image              string              `json:"image"`                  // Docker image
-	Replicas           int                 `json:"replicas"`               // Replica count
-	GpuCount           int                 `json:"gpuCount"`               // GPU count (1-N, resources = per-gpu-config * gpuCount)
-	TaskTimeout        int                 `json:"taskTimeout"`            // Task execution timeout in seconds (0 = use global default)
-	Env                map[string]string   `json:"env"`                    // Environment variables
-	Labels             map[string]string   `json:"labels"`                 // Labels
-	VolumeMounts       []VolumeMount       `json:"volumeMounts,omitempty"` // PVC volume mounts
-	ShmSize            string              `json:"shmSize,omitempty"`      // Shared memory size (e.g., "1Gi", "512Mi")
-	EnablePtrace       bool                `json:"enablePtrace,omitempty"` // Enable SYS_PTRACE capability for debugging (only for fixed resource pools)
+	Endpoint           string              `json:"endpoint"`                // Application name/endpoint
+	SpecName           string              `json:"specName"`                // Spec name
+	Image              string              `json:"image"`                   // Docker image
+	Replicas           int                 `json:"replicas"`                // Replica count
+	GpuCount           int                 `json:"gpuCount"`                // GPU count (1-N, resources = per-gpu-config * gpuCount)
+	TaskTimeout        int                 `json:"taskTimeout"`             // Task execution timeout in seconds (0 = use global default)
+	Env                map[string]string   `json:"env"`                     // Environment variables
+	Labels             map[string]string   `json:"labels"`                  // Labels
+	VolumeMounts       []VolumeMount       `json:"volumeMounts,omitempty"`  // PVC volume mounts
+	ShmSize            string              `json:"shmSize,omitempty"`       // Shared memory size (e.g., "1Gi", "512Mi")
+	EnablePtrace       bool                `json:"enablePtrace,omitempty"`  // Enable SYS_PTRACE capability for debugging (only for fixed resource pools)
+	ValidateImage      *bool               `json:"validateImage,omitempty"` // Whether to validate image before deployment (default: use config)
 	RegistryCredential *RegistryCredential `json:"registryCredential,omitempty"`
 }
 

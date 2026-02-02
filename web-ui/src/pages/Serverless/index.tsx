@@ -66,6 +66,7 @@ const ServerlessPage = () => {
       taskTimeout: 3600,
       maxPendingTasks: 100,
       shmSize: spec.resources?.shmSize || '1Gi',
+      validateImage: true,
       enablePtrace: false,
       autoscaler: {
         minReplicas: 0,
@@ -98,6 +99,7 @@ const ServerlessPage = () => {
         taskTimeout: values.taskTimeout || 0,
         maxPendingTasks: values.maxPendingTasks || undefined,
         shmSize: values.shmSize || undefined,
+        validateImage: values.validateImage,
         enablePtrace: values.enablePtrace || false,
         minReplicas: allValues.autoscaler?.minReplicas,
         maxReplicas: allValues.autoscaler?.maxReplicas,
@@ -250,7 +252,11 @@ const ServerlessPage = () => {
           </Form.Item>
 
           <Form.Item name="image" label="Docker Image" rules={[{ required: true, message: 'Please enter docker image' }]}>
-            <Input placeholder="your-registry/your-image:tag" />
+            <Input placeholder="your-registry/your-image:tag" addonAfter={
+              <Form.Item name="validateImage" valuePropName="checked" noStyle>
+                <Switch size="small" checkedChildren="Validate" unCheckedChildren="Skip" />
+              </Form.Item>
+            } />
           </Form.Item>
 
           <Form.Item name="imagePrefix" label="Image Prefix" tooltip="For auto image update detection">

@@ -222,6 +222,11 @@ func (s *WorkerService) ListWorkersWithPodInfo(ctx context.Context, endpoint str
 	return s.workerRepo.GetAll(ctx)
 }
 
+// ListWorkersForSync returns workers for Portal sync (includes recently terminated OFFLINE workers)
+func (s *WorkerService) ListWorkersForSync(ctx context.Context, endpoint string) ([]*mysqlModel.Worker, error) {
+	return s.workerRepo.GetByEndpointForSync(ctx, endpoint)
+}
+
 // GetWorker gets a worker by worker ID
 func (s *WorkerService) GetWorker(ctx context.Context, workerID string) (*model.Worker, error) {
 	mw, err := s.workerRepo.Get(ctx, workerID)

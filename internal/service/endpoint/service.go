@@ -26,7 +26,7 @@ func NewService(
 	deploymentProvider interfaces.DeploymentProvider,
 ) *Service {
 	metadata := NewMetadataManager(endpointRepo, autoscalerConfigRepo, taskRepo, workerLister)
-	deployment := NewDeploymentManager(deploymentProvider, metadata)
+	deployment := NewDeploymentManager(deploymentProvider, metadata, endpointRepo)
 	scaler := NewScalerManager(deploymentProvider, endpointRepo, autoscalerConfigRepo)
 
 	return &Service{

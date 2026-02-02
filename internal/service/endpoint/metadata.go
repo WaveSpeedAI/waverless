@@ -263,24 +263,30 @@ func toMySQLEndpoint(endpoint *interfaces.EndpointMetadata) *mysql.Endpoint {
 
 func fromMySQLEndpoint(endpoint *mysql.Endpoint) *interfaces.EndpointMetadata {
 	meta := &interfaces.EndpointMetadata{
-		Name:             endpoint.Endpoint,
-		SpecName:         endpoint.SpecName,
-		Description:      endpoint.Description,
-		Image:            endpoint.Image,
-		ImagePrefix:      endpoint.ImagePrefix,
-		ImageDigest:      endpoint.ImageDigest,
-		ImageLastChecked: endpoint.ImageLastChecked,
-		LatestImage:      endpoint.LatestImage,
-		Replicas:         endpoint.Replicas,
-		GpuCount:         endpoint.GpuCount,
-		TaskTimeout:      endpoint.TaskTimeout,
-		EnablePtrace:     endpoint.EnablePtrace,
-		MaxPendingTasks:  endpoint.MaxPendingTasks,
-		Env:              mysql.JSONMapToStringMap(endpoint.Env),
-		Labels:           mysql.JSONMapToStringMap(endpoint.Labels),
-		Status:           endpoint.Status,
-		CreatedAt:        endpoint.CreatedAt,
-		UpdatedAt:        endpoint.UpdatedAt,
+		Name:              endpoint.Endpoint,
+		SpecName:          endpoint.SpecName,
+		Description:       endpoint.Description,
+		Image:             endpoint.Image,
+		ImagePrefix:       endpoint.ImagePrefix,
+		ImageDigest:       endpoint.ImageDigest,
+		ImageLastChecked:  endpoint.ImageLastChecked,
+		LatestImage:       endpoint.LatestImage,
+		Replicas:          endpoint.Replicas,
+		GpuCount:          endpoint.GpuCount,
+		TaskTimeout:       endpoint.TaskTimeout,
+		EnablePtrace:      endpoint.EnablePtrace,
+		MaxPendingTasks:   endpoint.MaxPendingTasks,
+		Env:               mysql.JSONMapToStringMap(endpoint.Env),
+		Labels:            mysql.JSONMapToStringMap(endpoint.Labels),
+		Status:            endpoint.Status,
+		HealthStatus:      endpoint.HealthStatus,
+		LastHealthCheckAt: endpoint.LastHealthCheckAt,
+		CreatedAt:         endpoint.CreatedAt,
+		UpdatedAt:         endpoint.UpdatedAt,
+	}
+	// Set health message if present
+	if endpoint.HealthMessage != nil {
+		meta.HealthMessage = *endpoint.HealthMessage
 	}
 	// Parse RuntimeState
 	if endpoint.RuntimeState != nil {

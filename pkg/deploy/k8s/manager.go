@@ -305,6 +305,7 @@ type DeployAppRequest struct {
 	VolumeMounts    []interfaces.VolumeMount `json:"volumeMounts,omitempty"`      // PVC volume mounts
 	ShmSize         string                   `json:"shmSize,omitempty"`           // Shared memory size (e.g., "1Gi", "512Mi")
 	EnablePtrace    bool                     `json:"enablePtrace,omitempty"`      // Enable SYS_PTRACE capability for debugging (only for fixed resource pools)
+	ValidateImage   *bool                    `json:"validateImage,omitempty"`     // Whether to validate image before deployment (default: true)
 	Env             map[string]string        `json:"env,omitempty"`               // Custom environment variables
 
 	// Registry credential for private images

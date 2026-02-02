@@ -11,18 +11,18 @@ import (
 	"waverless/pkg/store/mysql/model"
 )
 
-// PodCountProvider 提供 Pod 数量统计的接口
+// PodCountProvider interface for Pod count statistics
 type PodCountProvider interface {
 	GetPodCountsBySpec(ctx context.Context) (map[string]PodCounts, error)
 }
 
-// PodCounts Pod 数量统计
+// PodCounts Pod count statistics
 type PodCounts struct {
 	Running int
 	Pending int
 }
 
-// cacheEntry 缓存条目，包含状态和原因
+// cacheEntry cache entry with status and reason
 type cacheEntry struct {
 	Status interfaces.CapacityStatus
 	Reason string
@@ -71,15 +71,15 @@ func (m *Manager) OnChange(callback func(interfaces.CapacityEvent)) {
 }
 
 func (m *Manager) Start(ctx context.Context) error {
-	// 加载初始状态
+	// Load initial state
 	if err := m.loadFromDB(ctx); err != nil {
 		logger.WarnCtx(ctx, "Failed to load capacity from DB: %v", err)
 	}
 
-	// 启动 Pod 数量统计定时任务
+	// Start Pod count updater scheduled task
 	go m.startPodCountUpdater(ctx)
 
-	// 启动 Spot 检查定时任务
+	// Start Spot checker scheduled task
 	go m.startSpotChecker(ctx)
 
 	if m.provider != nil && m.provider.SupportsWatch() {

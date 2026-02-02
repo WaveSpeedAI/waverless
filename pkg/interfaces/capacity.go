@@ -10,7 +10,7 @@ const (
 	CapacitySoldOut   CapacityStatus = "sold_out"
 )
 
-// CapacityEvent 容量变更事件
+// CapacityEvent capacity change event
 type CapacityEvent struct {
 	SpecName  string         `json:"specName"`
 	Status    CapacityStatus `json:"status"`
@@ -18,7 +18,7 @@ type CapacityEvent struct {
 	UpdatedAt time.Time      `json:"updatedAt"`
 }
 
-// SpecWithCapacity 带容量状态的规格信息
+// SpecWithCapacity spec info with capacity status
 type SpecWithCapacity struct {
 	*SpecInfo
 	Capacity     CapacityStatus `json:"capacity"`

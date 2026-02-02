@@ -65,7 +65,7 @@ func (r *SpecCapacityRepository) UpdateCounts(ctx context.Context, specName stri
 		}).Error
 }
 
-// UpdateSpotInfo 更新 Spot 信息
+// UpdateSpotInfo updates Spot info
 func (r *SpecCapacityRepository) UpdateSpotInfo(ctx context.Context, specName string, score int, price float64, instanceType string) error {
 	now := time.Now()
 	priceDecimal := decimal.NewFromFloat(price)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"waverless/pkg/constants"
+	"waverless/pkg/logger"
 	"waverless/pkg/store/mysql/model"
 
 	"gorm.io/gorm"
@@ -84,6 +85,8 @@ func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoi
 func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt *time.Time) error {
 	now := time.Now()
 
+	logger.InfoCtx(ctx, "UpsertFromPod: pod_name=%s, endpoint=%s, phase=%s, status=%s, reason=%s", podName, endpoint, phase, status, reason)
+
 	runtimeState := map[string]interface{}{
 		"phase":    phase,
 		"status":   status,
@@ -131,11 +134,13 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 		Updates(updates)
 
 	if result.Error != nil {
+		logger.ErrorCtx(ctx, "UpsertFromPod: update failed for pod_name=%s: %v", podName, result.Error)
 		return result.Error
 	}
 
 	// If no rows updated, create new worker (STARTING until heartbeat)
 	if result.RowsAffected == 0 {
+		logger.InfoCtx(ctx, "UpsertFromPod: creating new worker for pod_name=%s, endpoint=%s", podName, endpoint)
 		worker := &model.Worker{
 			WorkerID:            podName,
 			Endpoint:            endpoint,
@@ -156,7 +161,13 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 				worker.ColdStartDurationMs = &coldStartMs
 			}
 		}
-		return r.ds.DB(ctx).Create(worker).Error
+		if err := r.ds.DB(ctx).Create(worker).Error; err != nil {
+			logger.ErrorCtx(ctx, "UpsertFromPod: create failed for pod_name=%s: %v", podName, err)
+			return err
+		}
+		logger.InfoCtx(ctx, "UpsertFromPod: successfully created worker for pod_name=%s", podName)
+	} else {
+		logger.InfoCtx(ctx, "UpsertFromPod: updated %d worker(s) for pod_name=%s", result.RowsAffected, podName)
 	}
 
 	return nil
@@ -240,6 +251,18 @@ func (r *WorkerRepository) GetByEndpoint(ctx context.Context, endpoint string) (
 	return workers, err
 }
 
+// GetByEndpointForSync lists workers for an endpoint including recently terminated ones
+// Used by Portal for billing sync - includes OFFLINE workers terminated within the last hour
+func (r *WorkerRepository) GetByEndpointForSync(ctx context.Context, endpoint string) ([]*model.Worker, error) {
+	var workers []*model.Worker
+	oneHourAgo := time.Now().Add(-1 * time.Hour)
+	err := r.ds.DB(ctx).Where(
+		"endpoint = ? AND (status != ? OR (status = ? AND terminated_at > ?))",
+		endpoint, constants.WorkerStatusOffline, constants.WorkerStatusOffline, oneHourAgo,
+	).Find(&workers).Error
+	return workers, err
+}
+
 // GetAll lists all active workers
 func (r *WorkerRepository) GetAll(ctx context.Context) ([]*model.Worker, error) {
 	var workers []*model.Worker
@@ -283,4 +306,122 @@ func (r *WorkerRepository) MarkOfflineByPodName(ctx context.Context, podName str
 // Delete deletes a worker record
 func (r *WorkerRepository) Delete(ctx context.Context, workerID string) error {
 	return r.ds.DB(ctx).Where("worker_id = ?", workerID).Delete(&model.Worker{}).Error
+}
+
+// UpdateWorkerFailure updates worker failure information.
+// This method is called when a worker enters a failed state to record the failure details.
+//
+// IMPORTANT: failure_occurred_at is only set on the FIRST failure detection.
+// Subsequent updates will NOT overwrite this timestamp, ensuring the Resource Releaser
+// can correctly calculate the timeout duration from the first failure.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - podName: The pod name (used to identify the worker)
+//   - failureType: The type of failure (IMAGE_PULL_FAILED, CONTAINER_CRASH, etc.)
+//   - failureReason: The sanitized user-friendly failure message
+//   - failureDetails: JSON string with full failure details for debugging
+//   - occurredAt: The timestamp when the failure occurred (only used if first failure)
+//
+// Returns:
+//   - error if the database update fails
+//
+// Validates: Requirements 3.3, 3.4, 6.1, 6.2
+func (r *WorkerRepository) UpdateWorkerFailure(ctx context.Context, podName, failureType, failureReason, failureDetails string, occurredAt time.Time) error {
+	logger.InfoCtx(ctx, "UpdateWorkerFailure: attempting to update pod_name=%s, type=%s, reason=%s", podName, failureType, failureReason)
+
+	// First check if worker exists and if it already has a failure_occurred_at
+	var worker model.Worker
+	err := r.ds.DB(ctx).Where("pod_name = ?", podName).First(&worker).Error
+	if err != nil {
+		logger.WarnCtx(ctx, "UpdateWorkerFailure: worker not found with pod_name=%s: %v", podName, err)
+		return nil // Worker doesn't exist, nothing to update
+	}
+
+	// Build update map - always update failure info
+	updates := map[string]interface{}{
+		"failure_type":    failureType,
+		"failure_reason":  failureReason,
+		"failure_details": failureDetails,
+		"updated_at":      time.Now(),
+	}
+
+	// CRITICAL: Only set failure_occurred_at if it's not already set
+	// This ensures the Resource Releaser can correctly calculate timeout from FIRST failure
+	if worker.FailureOccurredAt == nil {
+		updates["failure_occurred_at"] = occurredAt
+		logger.InfoCtx(ctx, "UpdateWorkerFailure: setting initial failure_occurred_at for pod_name=%s", podName)
+	} else {
+		logger.DebugCtx(ctx, "UpdateWorkerFailure: preserving existing failure_occurred_at=%v for pod_name=%s",
+			worker.FailureOccurredAt, podName)
+	}
+
+	result := r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(updates)
+
+	if result.Error != nil {
+		logger.ErrorCtx(ctx, "UpdateWorkerFailure: database error for pod_name=%s: %v", podName, result.Error)
+		return result.Error
+	}
+
+	logger.InfoCtx(ctx, "UpdateWorkerFailure: successfully updated worker pod_name=%s, type=%s", podName, failureType)
+	return nil
+}
+
+// ClearWorkerFailure clears the failure information for a worker.
+// This method is called when a worker recovers from a failed state.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - podName: The pod name (used to identify the worker)
+//
+// Returns:
+//   - error if the database update fails
+func (r *WorkerRepository) ClearWorkerFailure(ctx context.Context, podName string) error {
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"failure_type":        nil,
+			"failure_reason":      nil,
+			"failure_details":     nil,
+			"failure_occurred_at": nil,
+			"updated_at":          time.Now(),
+		}).Error
+}
+
+// GetWorkersWithFailure returns all workers that have failure information.
+// This is useful for monitoring and reporting purposes.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - endpoint: Optional endpoint filter (empty string for all endpoints)
+//
+// Returns:
+//   - List of workers with failure information
+//   - error if the database query fails
+func (r *WorkerRepository) GetWorkersWithFailure(ctx context.Context, endpoint string) ([]*model.Worker, error) {
+	var workers []*model.Worker
+	query := r.ds.DB(ctx).Where("failure_type IS NOT NULL AND failure_type != ''")
+	if endpoint != "" {
+		query = query.Where("endpoint = ?", endpoint)
+	}
+	err := query.Find(&workers).Error
+	return workers, err
+}
+
+// GetWorkersByFailureType returns all active workers with a specific failure type.
+// It excludes OFFLINE workers since they are no longer running.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - failureType: The failure type to filter by
+//
+// Returns:
+//   - List of active workers with the specified failure type
+//   - error if the database query fails
+func (r *WorkerRepository) GetWorkersByFailureType(ctx context.Context, failureType string) ([]*model.Worker, error) {
+	var workers []*model.Worker
+	err := r.ds.DB(ctx).Where("failure_type = ? AND status != ?", failureType, "OFFLINE").Find(&workers).Error
+	return workers, err
 }

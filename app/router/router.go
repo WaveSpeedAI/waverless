@@ -101,6 +101,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 				endpoints.DELETE("/:name", r.endpointHandler.DeleteEndpoint)                       // Delete endpoint
 				endpoints.GET("/:name/logs", r.endpointHandler.GetEndpointLogs)                    // Logs
 				endpoints.GET("/:name/workers", r.endpointHandler.GetEndpointWorkers)              // Workers
+				endpoints.GET("/:name/workers/sync", r.endpointHandler.GetEndpointWorkersForSync)  // Workers for Portal sync (includes recently terminated)
 				endpoints.GET("/:name/workers/:pod_name/describe", r.workerHandler.DescribeWorker) // Describe Worker (Pod detail)
 				endpoints.GET("/:name/workers/:pod_name/yaml", r.workerHandler.GetWorkerYAML)      // Get Worker Pod YAML
 				endpoints.GET("/:name/workers/exec", r.endpointHandler.ExecWorker)                 // Worker Exec (WebSocket)

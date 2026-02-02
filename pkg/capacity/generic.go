@@ -6,7 +6,7 @@ import (
 	"waverless/pkg/interfaces"
 )
 
-// GenericProvider 通用 fallback 实现，不主动感知容量
+// GenericProvider generic fallback implementation, does not actively sense capacity
 type GenericProvider struct{}
 
 func NewGenericProvider() *GenericProvider {
@@ -16,13 +16,13 @@ func NewGenericProvider() *GenericProvider {
 func (p *GenericProvider) SupportsWatch() bool { return false }
 
 func (p *GenericProvider) Watch(ctx context.Context, callback func(interfaces.CapacityEvent)) error {
-	// 不支持 watch
+	// Does not support watch
 	<-ctx.Done()
 	return nil
 }
 
 func (p *GenericProvider) Check(ctx context.Context, specName string) (*interfaces.CapacityEvent, error) {
-	// 默认返回 available
+	// Default returns available
 	return &interfaces.CapacityEvent{
 		SpecName: specName,
 		Status:   interfaces.CapacityAvailable,

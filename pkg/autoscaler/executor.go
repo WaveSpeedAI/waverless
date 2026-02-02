@@ -21,6 +21,7 @@ type Executor struct {
 	workerLister       interfaces.WorkerLister    // For smart scale-down
 	taskRepo           *mysql.TaskRepository      // For checking running tasks in database
 	k8sProvider        *k8s.K8sDeploymentProvider // For pod draining & deletion
+	endpointRepo       *mysql.EndpointRepository  // For checking endpoint health status
 }
 
 // NewExecutor creates executor
@@ -30,6 +31,7 @@ func NewExecutor(
 	scalingEventRepo *mysql.ScalingEventRepository,
 	workerLister interfaces.WorkerLister,
 	taskRepo *mysql.TaskRepository,
+	endpointRepo *mysql.EndpointRepository,
 ) *Executor {
 	// Try to get K8sDeploymentProvider for pod-level operations
 	k8sProvider, _ := deploymentProvider.(*k8s.K8sDeploymentProvider)
@@ -41,6 +43,7 @@ func NewExecutor(
 		workerLister:       workerLister,
 		taskRepo:           taskRepo,
 		k8sProvider:        k8sProvider,
+		endpointRepo:       endpointRepo,
 	}
 }
 
@@ -87,6 +90,37 @@ func (e *Executor) ExecuteDecisions(ctx context.Context, decisions []*ScaleDecis
 
 // scaleUp executes scale-up
 func (e *Executor) scaleUp(ctx context.Context, decision *ScaleDecision) error {
+	// Check if endpoint is blocked due to image failure (Property 8: Failed Endpoint Prevents New Pods)
+	// Validates: Requirements 5.5
+	if e.endpointRepo != nil {
+		blocked, reason, err := e.endpointRepo.IsBlockedDueToImageFailure(ctx, decision.Endpoint)
+		if err != nil {
+			logger.WarnCtx(ctx, "failed to check endpoint health status: %v", err)
+			// Continue with scale-up if check fails (fail-open for availability)
+		} else if blocked {
+			logger.WarnCtx(ctx, "scale up blocked for %s: endpoint is UNHEALTHY due to image issues - %s",
+				decision.Endpoint, reason)
+
+			// Record blocked event
+			event := &mysql.ScalingEvent{
+				EventID:      generateEventID(),
+				Endpoint:     decision.Endpoint,
+				Timestamp:    time.Now(),
+				Action:       "scale_up_blocked_image_failure",
+				FromReplicas: decision.CurrentReplicas,
+				ToReplicas:   decision.DesiredReplicas,
+				Reason:       fmt.Sprintf("Endpoint is UNHEALTHY due to image issues: %s. Please update the image configuration.", reason),
+				QueueLength:  decision.QueueLength,
+				Priority:     decision.Priority,
+			}
+			if err := e.scalingEventRepo.Create(ctx, event); err != nil {
+				logger.ErrorCtx(ctx, "failed to save blocked event: %v", err)
+			}
+
+			return fmt.Errorf("scale up blocked: endpoint %s is UNHEALTHY due to image issues, please update the image configuration", decision.Endpoint)
+		}
+	}
+
 	logger.InfoCtx(ctx, "scaling up %s from %d to %d replicas (reason: %s)",
 		decision.Endpoint, decision.CurrentReplicas, decision.DesiredReplicas, decision.Reason)
 
@@ -107,6 +141,13 @@ func (e *Executor) scaleUp(ctx context.Context, decision *ScaleDecision) error {
 		meta.Replicas = decision.DesiredReplicas
 		meta.LastScaleTime = time.Now()
 		meta.UpdatedAt = time.Now()
+		// Fix status if it was incorrectly set to Stopped by K8s informer race condition
+		// When scaling up, status should be Pending (waiting for pods to be ready)
+		if meta.Status == "Stopped" && decision.DesiredReplicas > 0 {
+			logger.InfoCtx(ctx, "fixing status for %s: Stopped -> Pending (scaling up to %d replicas)",
+				decision.Endpoint, decision.DesiredReplicas)
+			meta.Status = "Pending"
+		}
 		if err := e.endpointService.UpdateEndpoint(ctx, meta); err != nil {
 			logger.ErrorCtx(ctx, "failed to update endpoint metadata: %v", err)
 		}
@@ -408,9 +449,25 @@ func generateEventID() string {
 	return fmt.Sprintf("evt_%d", time.Now().UnixNano())
 }
 
-// isOrphanedEndpoint checks if an endpoint is orphaned (no deployment exists in K8s)
+// isOrphanedEndpoint checks if an endpoint is orphaned (no deployment exists)
 // An orphaned endpoint has replicas > 0 in database but no actual deployment
+//
+// IMPORTANT: This check is ONLY for K8s provider, not for Novita or other providers
+// because different providers have different behaviors for GetApp when endpoint is being created
+//
+// Conditions to be considered orphaned (ALL must be true):
+// 1. Using K8s provider (not Novita)
+// 2. Deployment doesn't exist in K8s
+// 3. Endpoint was created more than 10 minutes ago (not a new deployment)
+// 4. Has had worker records before (was deployed successfully at some point)
 func (e *Executor) isOrphanedEndpoint(ctx context.Context, decision *ScaleDecision) bool {
+	// Only apply this logic for K8s provider
+	// Novita and other providers have different behaviors
+	if e.k8sProvider == nil {
+		logger.DebugCtx(ctx, "endpoint %s: skipping orphan check (not K8s provider)", decision.Endpoint)
+		return false
+	}
+
 	// Check if deployment exists in K8s
 	_, err := e.deploymentProvider.GetApp(ctx, decision.Endpoint)
 	if err == nil {
@@ -418,8 +475,46 @@ func (e *Executor) isOrphanedEndpoint(ctx context.Context, decision *ScaleDecisi
 		return false
 	}
 
-	// Deployment doesn't exist, this is an orphaned endpoint
-	logger.InfoCtx(ctx, "endpoint %s: deployment not found in K8s, marking as orphaned", decision.Endpoint)
+	// Deployment doesn't exist, but we need more checks to confirm it's truly orphaned
+	// Get endpoint metadata to check creation time
+	meta, err := e.endpointService.GetEndpoint(ctx, decision.Endpoint)
+	if err != nil {
+		logger.WarnCtx(ctx, "endpoint %s: failed to get metadata for orphan check: %v", decision.Endpoint, err)
+		return false
+	}
+
+	// Check 1: Endpoint must be created more than 10 minutes ago
+	// This prevents marking newly created endpoints as orphaned
+	endpointAge := time.Since(meta.CreatedAt)
+	if endpointAge < 10*time.Minute {
+		logger.DebugCtx(ctx, "endpoint %s: skipping orphan check (created only %.1f minutes ago)",
+			decision.Endpoint, endpointAge.Minutes())
+		return false
+	}
+
+	// Check 2: Must have had worker records before (indicates it was deployed at some point)
+	// If no workers ever existed, it might be a deployment that never succeeded
+	workers, err := e.workerLister.ListWorkers(ctx, decision.Endpoint)
+	if err != nil {
+		logger.WarnCtx(ctx, "endpoint %s: failed to list workers for orphan check: %v", decision.Endpoint, err)
+		return false
+	}
+
+	if len(workers) == 0 {
+		// No worker records at all - this could be a deployment that's still initializing
+		// or one that failed before any worker registered
+		// Be conservative and don't mark as orphaned
+		logger.DebugCtx(ctx, "endpoint %s: skipping orphan check (no worker records found)", decision.Endpoint)
+		return false
+	}
+
+	// All checks passed - this is truly an orphaned endpoint:
+	// - K8s provider
+	// - No deployment exists
+	// - Created more than 10 minutes ago
+	// - Had workers before (so it was deployed successfully at some point)
+	logger.InfoCtx(ctx, "endpoint %s: confirmed orphaned (no deployment, age=%.1f min, had %d workers)",
+		decision.Endpoint, endpointAge.Minutes(), len(workers))
 	return true
 }
 

@@ -277,6 +277,17 @@ const EndpointDetailPage = () => {
                 <tr><td className="info-label">Namespace</td><td>{ep.namespace || 'default'}</td><td className="info-label">Type</td><td>{ep.type}</td></tr>
                 <tr><td className="info-label">Spec</td><td>{ep.specName || 'N/A'}</td><td className="info-label">Task Timeout</td><td>{ep.taskTimeout || 3600}s</td></tr>
                 <tr><td className="info-label">Max Pending Tasks</td><td>{ep.maxPendingTasks || 100}</td><td className="info-label">Created At</td><td>{ep.createdAt ? new Date(ep.createdAt).toLocaleString() : '-'}</td></tr>
+                {ep.healthStatus && (
+                  <tr>
+                    <td className="info-label">Health Status</td>
+                    <td colSpan={3}>
+                      <span className={`tag ${ep.healthStatus === 'HEALTHY' ? 'success' : ep.healthStatus === 'DEGRADED' ? 'pending' : 'failed'}`}>
+                        {ep.healthStatus === 'HEALTHY' ? '✓' : ep.healthStatus === 'DEGRADED' ? '⚠' : '✗'} {ep.healthStatus}
+                      </span>
+                      {ep.healthMessage && <span style={{ marginLeft: 8, color: '#6b7280', fontSize: 12 }}>{ep.healthMessage}</span>}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -608,9 +619,25 @@ const WorkersTab = ({ workers, endpoint }: { workers: WorkerWithPodInfo[]; endpo
             <div className="worker-name">{w.pod_name || w.id}</div>
             <div className="worker-meta">
               <span className={`tag ${w.status?.toUpperCase() === 'ONLINE' ? 'running' : w.status?.toUpperCase() === 'BUSY' ? 'running' : w.status?.toUpperCase() === 'STARTING' ? 'pending' : w.status?.toUpperCase() === 'DRAINING' ? 'pending' : 'failed'}`} style={{ marginRight: 4 }}>{w.status}</span>
-              {w.podStatus && <span className={`tag ${w.podStatus === 'Running' ? 'running' : 'pending'}`} style={{ marginRight: 8 }}>Pod: {w.podStatus}</span>}
+              {w.podStatus && <span className={`tag ${w.podStatus === 'Running' ? 'running' : w.podStatus === 'ImagePullBackOff' || w.podStatus === 'ErrImagePull' || w.podStatus === 'CrashLoopBackOff' ? 'failed' : 'pending'}`} style={{ marginRight: 8 }}>Pod: {w.podStatus}</span>}
               Jobs: {w.current_jobs || 0}/{w.concurrency || 1} • Heartbeat: {formatTime(w.last_heartbeat)} {w.version && `• v${w.version}`}
             </div>
+            {/* Failure Information */}
+            {w.failureType && (
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                <Tooltip title={
+                  <div>
+                    <div><strong>Error Type:</strong> {w.failureType}</div>
+                    {w.failureReason && <div><strong>Reason:</strong> {w.failureReason}</div>}
+                    {w.failureSuggestion && <div style={{ color: '#52c41a' }}><strong>Suggestion:</strong> {w.failureSuggestion}</div>}
+                  </div>
+                }>
+                  <span style={{ color: '#f56565', cursor: 'help' }}>
+                    ⚠️ {w.failureReason || w.failureType}
+                  </span>
+                </Tooltip>
+              </div>
+            )}
           </div>
           {getIdleTag(w)}
         </div>

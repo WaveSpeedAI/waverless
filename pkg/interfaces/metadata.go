@@ -106,6 +106,11 @@ type EndpointMetadata struct {
 	ReadyReplicas     int    `json:"readyReplicas"`     // Ready replicas
 	AvailableReplicas int    `json:"availableReplicas"` // Available replicas
 
+	// Health status (for image validation and status transparency feature)
+	HealthStatus      string     `json:"healthStatus"`                // HEALTHY, DEGRADED, UNHEALTHY
+	HealthMessage     string     `json:"healthMessage,omitempty"`     // User-friendly health message
+	LastHealthCheckAt *time.Time `json:"lastHealthCheckAt,omitempty"` // Last health check timestamp
+
 	// Worker information
 	WorkerCount       int `json:"workerCount"`       // Worker count
 	ActiveWorkerCount int `json:"activeWorkerCount"` // Active Worker count

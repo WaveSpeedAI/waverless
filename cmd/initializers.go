@@ -20,6 +20,7 @@ import (
 	"waverless/pkg/logger"
 	"waverless/pkg/monitoring"
 	"waverless/pkg/provider"
+	"waverless/pkg/resource"
 	mysqlstore "waverless/pkg/store/mysql"
 	redisstore "waverless/pkg/store/redis"
 
@@ -207,7 +208,9 @@ func (app *Application) initServices() error {
 		// Non-critical feature, continue startup
 	}
 
-	// Setup Pod status watcher for worker runtime state sync (when K8s is enabled)
+	// Setup Pod status watcher for worker runtime state sync AND failure detection (when K8s is enabled)
+	// This combines worker state sync and failure monitoring into a single watcher to avoid duplicate callbacks
+	// Validates: Requirements 3.1, 3.2, 3.3, 3.4
 	if err := app.setupPodStatusWatcher(k8sDeployProvider); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to setup pod status watcher: %v (non-critical, continuing)", err)
 	}
@@ -233,6 +236,20 @@ func (app *Application) initServices() error {
 	if err := app.setupNovitaPodStatusWatcher(novitaDeployProvider); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to setup Novita pod status watcher: %v (non-critical, continuing)", err)
 		// Non-critical feature, continue startup
+	}
+
+	// Setup Novita Worker status monitor for failure detection and tracking (when Novita is enabled)
+	// This monitors worker status changes and updates worker failure information in the database
+	// Validates: Requirements 3.1, 3.2, 3.3, 3.4
+	if err := app.setupNovitaWorkerStatusMonitor(novitaDeployProvider); err != nil {
+		logger.WarnCtx(app.ctx, "Failed to setup Novita worker status monitor: %v (non-critical, continuing)", err)
+	}
+
+	// Setup Resource Releaser for automatic cleanup of failed workers
+	// This monitors workers with IMAGE_PULL_FAILED status and terminates them after timeout
+	// Validates: Requirements 5.1, 5.2, 5.3, 5.4
+	if err := app.setupResourceReleaser(); err != nil {
+		logger.WarnCtx(app.ctx, "Failed to setup resource releaser: %v (non-critical, continuing)", err)
 	}
 
 	return nil
@@ -636,6 +653,7 @@ func (app *Application) initAutoScaler() error {
 		app.mysqlRepo.ScalingEvent,
 		app.redisClient.GetClient(),
 		specManager,
+		app.mysqlRepo.Endpoint,
 	)
 
 	app.autoscalerHandler = handler.NewAutoScalerHandler(app.autoscalerMgr, app.endpointService)
@@ -643,13 +661,21 @@ func (app *Application) initAutoScaler() error {
 	return nil
 }
 
-// setupPodStatusWatcher syncs Pod runtime state to worker table
+// setupPodStatusWatcher syncs Pod runtime state to worker table AND detects worker failures.
+// This combines two responsibilities into a single watcher to avoid duplicate callbacks:
+// 1. Worker state sync: Create/update worker records from pod status
+// 2. Failure detection: Detect and record worker failures (ImagePullBackOff, CrashLoopBackOff, etc.)
+//
+// Validates: Requirements 3.1, 3.2, 3.3, 3.4
 func (app *Application) setupPodStatusWatcher(k8sProvider *k8s.K8sDeploymentProvider) error {
 	if k8sProvider == nil {
 		return nil
 	}
 
-	logger.InfoCtx(app.ctx, "Setting up pod status watcher for worker runtime sync...")
+	logger.InfoCtx(app.ctx, "Setting up pod status watcher for worker runtime sync and failure detection...")
+
+	// Create failure detector for identifying and sanitizing worker failures
+	failureDetector := k8s.NewK8sWorkerStatusMonitor(k8sProvider.GetManager(), app.mysqlRepo.Worker)
 
 	err := k8sProvider.WatchPodStatusChange(app.ctx, func(podName, endpoint string, info *interfaces.PodInfo) {
 		var createdAt, startedAt *time.Time
@@ -668,7 +694,7 @@ func (app *Application) setupPodStatusWatcher(k8sProvider *k8s.K8sDeploymentProv
 		existingWorker, _ := app.mysqlRepo.Worker.GetByPodName(app.ctx, endpoint, podName)
 		isNewWorker := existingWorker == nil
 
-		// Create or update worker (status STARTING until heartbeat)
+		// 1. Create or update worker (status STARTING until heartbeat)
 		if err := app.mysqlRepo.Worker.UpsertFromPod(app.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt); err != nil {
 			logger.WarnCtx(app.ctx, "Failed to upsert worker from pod %s: %v", podName, err)
 		}
@@ -676,6 +702,20 @@ func (app *Application) setupPodStatusWatcher(k8sProvider *k8s.K8sDeploymentProv
 		// Record WORKER_STARTED event for new workers
 		if isNewWorker && app.workerEventService != nil {
 			app.workerEventService.RecordWorkerStarted(app.ctx, podName, endpoint)
+		}
+
+		// 2. Detect and record worker failures
+		// This uses the failure detector to identify failure states and update the worker record
+		if failureInfo := failureDetector.DetectFailure(info); failureInfo != nil {
+			logger.WarnCtx(app.ctx, "🚨 Worker failure detected: pod=%s, endpoint=%s, type=%s, reason=%s",
+				podName, endpoint, failureInfo.Type, failureInfo.SanitizedMsg)
+
+			// Update worker failure information in database
+			if err := failureDetector.UpdateWorkerFailure(app.ctx, podName, endpoint, failureInfo); err != nil {
+				logger.ErrorCtx(app.ctx, "Failed to update worker failure: pod=%s, error=%v", podName, err)
+			} else {
+				logger.InfoCtx(app.ctx, "✅ Worker failure recorded in database: pod=%s, type=%s", podName, failureInfo.Type)
+			}
 		}
 	})
 
@@ -697,7 +737,110 @@ func (app *Application) setupPodStatusWatcher(k8sProvider *k8s.K8sDeploymentProv
 		logger.WarnCtx(app.ctx, "Failed to setup pod delete watcher: %v", err)
 	}
 
-	logger.InfoCtx(app.ctx, "✅ Pod status watcher registered successfully")
+	logger.InfoCtx(app.ctx, "✅ Pod status watcher registered successfully (with failure detection)")
+	return nil
+}
+
+// setupNovitaWorkerStatusMonitor sets up the Novita worker status monitor for failure detection and tracking.
+// This monitor uses polling to detect worker status changes and updates worker failure information in the database.
+// When a worker enters a failed state (image pull failure, container crash, resource limit, etc.),
+// it records the failure type, reason, and sanitized message for user-friendly display.
+//
+// Validates: Requirements 3.1, 3.2, 3.3, 3.4
+func (app *Application) setupNovitaWorkerStatusMonitor(novitaProvider *novita.NovitaDeploymentProvider) error {
+	if novitaProvider == nil {
+		logger.InfoCtx(app.ctx, "Novita provider not available, skipping worker status monitor setup")
+		return nil
+	}
+
+	logger.InfoCtx(app.ctx, "Setting up Novita worker status monitor for failure detection...")
+
+	// Get the underlying client from the provider
+	// We need access to the client to create the status monitor
+	client := novitaProvider.GetClient()
+	if client == nil {
+		return fmt.Errorf("novita client not available")
+	}
+
+	// Create the worker status monitor
+	statusMonitor := novita.NewNovitaWorkerStatusMonitor(client, app.mysqlRepo.Worker)
+
+	// Start the status monitor in a goroutine
+	// It will poll for worker status changes and update worker failure information
+	go func() {
+		logger.InfoCtx(app.ctx, "Starting Novita worker status monitor...")
+
+		// The callback is invoked when a worker enters a failed state
+		// The monitor already updates the database internally, but we can add additional logging here
+		err := statusMonitor.WatchWorkerStatus(app.ctx, func(workerID, endpoint string, info *interfaces.WorkerFailureInfo) {
+			logger.WarnCtx(app.ctx, "🚨 Novita worker failure detected and recorded: worker=%s, endpoint=%s, type=%s, reason=%s",
+				workerID, endpoint, info.Type, info.SanitizedMsg)
+
+			// Additional actions can be added here in the future:
+			// - Send alerts/notifications
+			// - Update endpoint health status
+			// - Trigger resource cleanup
+		})
+
+		if err != nil && err != context.Canceled {
+			logger.ErrorCtx(app.ctx, "Novita worker status monitor stopped with error: %v", err)
+		} else {
+			logger.InfoCtx(app.ctx, "Novita worker status monitor stopped gracefully")
+		}
+	}()
+
+	logger.InfoCtx(app.ctx, "✅ Novita worker status monitor setup completed")
+	return nil
+}
+
+// setupResourceReleaser sets up the resource releaser for automatic cleanup of failed workers.
+// This component monitors workers with IMAGE_PULL_FAILED status and terminates them after the configured timeout.
+// It prevents GPU resources from being wasted on workers that cannot start due to image issues.
+//
+// The releaser performs the following actions:
+// 1. Periodically checks for workers with IMAGE_PULL_FAILED failure type
+// 2. If a worker has been in failed state longer than ImagePullTimeout (default: 5 minutes), terminates it
+// 3. Updates the endpoint health status based on the ratio of failed workers
+//
+// Validates: Requirements 5.1, 5.2, 5.3, 5.4
+func (app *Application) setupResourceReleaser() error {
+	if app.deploymentProvider == nil {
+		logger.InfoCtx(app.ctx, "Deployment provider not available, skipping resource releaser setup")
+		return nil
+	}
+
+	logger.InfoCtx(app.ctx, "Setting up resource releaser for automatic cleanup of failed workers...")
+
+	// Get configuration from config file or use defaults
+	releaserConfig := resource.DefaultResourceReleaserConfig()
+
+	// Override with config values if available
+	if app.config.ResourceReleaser.ImagePullTimeout > 0 {
+		releaserConfig.ImagePullTimeout = app.config.ResourceReleaser.ImagePullTimeout
+	}
+	if app.config.ResourceReleaser.CheckInterval > 0 {
+		releaserConfig.CheckInterval = app.config.ResourceReleaser.CheckInterval
+	}
+	if app.config.ResourceReleaser.MaxRetries > 0 {
+		releaserConfig.MaxRetries = app.config.ResourceReleaser.MaxRetries
+	}
+
+	// Create the resource releaser
+	releaser := resource.NewResourceReleaser(
+		app.deploymentProvider,
+		app.mysqlRepo.Worker,
+		app.mysqlRepo.Endpoint,
+		releaserConfig,
+	)
+
+	// Start the releaser in a goroutine
+	go func() {
+		logger.InfoCtx(app.ctx, "Starting resource releaser with config: imagePullTimeout=%v, checkInterval=%v, maxRetries=%d",
+			releaserConfig.ImagePullTimeout, releaserConfig.CheckInterval, releaserConfig.MaxRetries)
+		releaser.Start(app.ctx)
+	}()
+
+	logger.InfoCtx(app.ctx, "✅ Resource releaser setup completed")
 	return nil
 }
 
@@ -767,7 +910,7 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 					logger.WarnCtx(app.ctx, "Failed to create EC2 client for spot checker: %v", err)
 				} else {
 					spotChecker = capacity.NewAWSSpotChecker(ec2Client, region, specToInstance)
-					// 设置 NodePool fetcher 用于获取没有配置 instance-type 的 spec
+					// Set NodePool fetcher for specs without instance-type configuration
 					spotChecker.SetNodePoolFetcher(k8sProvider, specToNodePool)
 					logger.InfoCtx(app.ctx, "AWS Spot checker enabled: %d from config, %d from nodepool", len(specToInstance), len(specToNodePool))
 				}
@@ -808,16 +951,16 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 	return nil
 }
 
-// createEC2Client 创建 AWS EC2 客户端
+// createEC2Client creates an AWS EC2 client
 func createEC2Client(ctx context.Context, awsCfg *config.AWSConfig) (*ec2.Client, string, error) {
 	var opts []func(*awsconfig.LoadOptions) error
 
-	// 如果配置了 region
+	// If region is configured
 	if awsCfg != nil && awsCfg.Region != "" {
 		opts = append(opts, awsconfig.WithRegion(awsCfg.Region))
 	}
 
-	// 如果配置了 AK/SK
+	// If AK/SK is configured
 	if awsCfg != nil && awsCfg.AccessKeyID != "" && awsCfg.SecretAccessKey != "" {
 		opts = append(opts, awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(awsCfg.AccessKeyID, awsCfg.SecretAccessKey, ""),
@@ -832,7 +975,7 @@ func createEC2Client(ctx context.Context, awsCfg *config.AWSConfig) (*ec2.Client
 	return ec2.NewFromConfig(cfg), cfg.Region, nil
 }
 
-// k8sPodCountAdapter 适配 k8s provider 到 capacity.PodCountProvider
+// k8sPodCountAdapter adapts k8s provider to capacity.PodCountProvider
 type k8sPodCountAdapter struct {
 	provider *k8s.K8sDeploymentProvider
 }

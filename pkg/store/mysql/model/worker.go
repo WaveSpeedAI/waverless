@@ -26,6 +26,12 @@ type Worker struct {
 	CreatedAt            time.Time  `gorm:"column:created_at;not null"`
 	UpdatedAt            time.Time  `gorm:"column:updated_at;not null"`
 	TerminatedAt         *time.Time `gorm:"column:terminated_at"` // Time when worker reached terminal state (pod deleted)
+
+	// Failure tracking fields for image validation and status transparency
+	FailureType       string     `gorm:"column:failure_type"`              // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
+	FailureReason     string     `gorm:"column:failure_reason"`            // Sanitized user-friendly message
+	FailureDetails    string     `gorm:"column:failure_details;type:text"` // JSON with full details for debugging
+	FailureOccurredAt *time.Time `gorm:"column:failure_occurred_at"`       // Timestamp when failure was detected
 }
 
 func (Worker) TableName() string {

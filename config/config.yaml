@@ -75,3 +75,18 @@ novita:
   base_url: "https://api.novita.ai"  # Novita API base URL
   config_dir: "./config"  # Configuration directory (contains specs.yaml and templates/)
   poll_interval: 10  # Poll interval for status updates (seconds, default: 10)
+
+# Image Validation Configuration
+# Validates image format and existence before creating endpoints
+imageValidation:
+  enabled: true              # Enable image validation (default: true)
+  timeout: 30s               # Timeout for validation requests (default: 30s)
+  cacheDuration: 1h          # How long to cache validation results (default: 1h)
+  skipOnTimeout: true        # Proceed with warning when validation times out (default: true)
+
+# Resource Releaser Configuration
+# Automatically releases resources when image pull fails
+resourceReleaser:
+  imagePullTimeout: 5m       # Max time to wait for image pull (default: 5m)
+  checkInterval: 30s         # Interval between checks for stuck workers (default: 30s)
+  maxRetries: 3              # Max termination retries (default: 3)

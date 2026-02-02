@@ -1008,3 +1008,9 @@ func (p *NovitaDeploymentProvider) SetSpecRepository(repo SpecRepositoryInterfac
 func (p *NovitaDeploymentProvider) IsPodTerminating(ctx context.Context, podName string) (bool, error) {
 	return false, nil
 }
+
+// GetClient returns the underlying Novita client for use by other components.
+// This is used by the worker status monitor to poll for worker status changes.
+func (p *NovitaDeploymentProvider) GetClient() clientInterface {
+	return p.client
+}
