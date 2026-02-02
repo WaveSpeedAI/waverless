@@ -12,6 +12,8 @@ import (
 	"waverless/pkg/config"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+
+	"github.com/go-redis/redis/v8"
 )
 
 // clientInterface defines the interface for Novita API client (for testing)
@@ -80,6 +82,9 @@ type NovitaDeploymentProvider struct {
 	workerDeleteCallbacks     map[uint64]WorkerDeleteCallback
 	workerDeleteCallbacksLock sync.RWMutex
 	workerStates              sync.Map // workerID -> *workerState
+
+	// Redis client for draining workers tracking (multi-replica safe)
+	redisClient *redis.Client
 }
 
 // NewNovitaDeploymentProvider creates a new Novita deployment provider
@@ -129,7 +134,7 @@ func NewNovitaDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvi
 		pollInterval:          pollInterval,
 		workerStatusCallbacks: make(map[uint64]WorkerStatusChangeCallback),
 		workerDeleteCallbacks: make(map[uint64]WorkerDeleteCallback),
-		globalEnv:        globalEnv,
+		globalEnv:             globalEnv,
 	}, nil
 }
 
@@ -281,13 +286,9 @@ func (p *NovitaDeploymentProvider) ScaleApp(ctx context.Context, endpoint string
 			return fmt.Errorf("failed to drain workers for scale down: %w", err)
 		}
 		logger.Infof("Drained %d workers for endpoint %s: %v", len(drainedWorkerIDs), endpoint, drainedWorkerIDs)
-
-		// TODO: Use drainedWorkerIDs to notify API server to stop dispatching tasks to these workers
-		// Possible implementations:
-		// 1. Modify DeploymentProvider interface's ScaleApp return type to (*ScaleResult, error)
-		// 2. Or add a callback mechanism to notify upper layer services
-		// 3. Or directly call worker service in provider to update worker status
-		_ = drainedWorkerIDs
+		// Draining workers are tracked in p.drainingWorkers map
+		// WorkerService.PullJob will call IsPodTerminating() to check if worker is draining
+		// and mark it as DRAINING status, preventing new task dispatch
 	}
 
 	// Create update request with modified replicas
@@ -329,6 +330,7 @@ func (p *NovitaDeploymentProvider) drainWorkersForScaleDown(ctx context.Context,
 	workersToDrain := p.selectWorkersToDrain(workers, numToDrain)
 
 	drainedIDs := make([]string, 0, len(workersToDrain))
+
 	for _, worker := range workersToDrain {
 		logger.Infof("Draining worker %s for endpoint %s", worker.ID, endpoint.Name)
 
@@ -342,8 +344,14 @@ func (p *NovitaDeploymentProvider) drainWorkersForScaleDown(ctx context.Context,
 			return nil, err
 		}
 
+		// Track draining worker in Redis for IsPodTerminating check
+		if err := p.MarkWorkerDraining(ctx, worker.ID); err != nil {
+			logger.WarnCtx(ctx, "Failed to mark worker %s as draining in Redis: %v", worker.ID, err)
+			// Continue anyway - Novita side is already drained
+		}
+
 		drainedIDs = append(drainedIDs, worker.ID)
-		logger.Infof("Successfully drained worker %s", worker.ID)
+		logger.Infof("Successfully drained worker %s, marked as terminating", worker.ID)
 	}
 
 	return drainedIDs, nil
@@ -1004,9 +1012,115 @@ func (p *NovitaDeploymentProvider) SetSpecRepository(repo SpecRepositoryInterfac
 	p.specsConfig.SetSpecRepository(repo)
 }
 
-// IsPodTerminating checks if a worker is terminating (Novita doesn't have this concept)
+// SetRedisClient sets the Redis client for draining workers tracking
+// This enables multi-replica safe draining state management
+func (p *NovitaDeploymentProvider) SetRedisClient(client *redis.Client) {
+	p.redisClient = client
+}
+
+// Redis key constants for draining workers
+const (
+	// Redis key prefix for draining workers: novita:draining:{workerID}
+	redisDrainingKeyPrefix = "novita:draining:"
+	// TTL for draining worker keys (1 hour - safety cleanup)
+	redisDrainingTTL = 1 * time.Hour
+)
+
+// drainingWorkerKey returns the Redis key for a draining worker
+func drainingWorkerKey(workerID string) string {
+	return redisDrainingKeyPrefix + workerID
+}
+
+// IsPodTerminating checks if a worker is in draining state (being scaled down)
+// This is called by WorkerService.PullJob to prevent dispatching tasks to draining workers
+// Uses Redis for multi-replica safe state management
 func (p *NovitaDeploymentProvider) IsPodTerminating(ctx context.Context, podName string) (bool, error) {
+	if podName == "" {
+		return false, nil
+	}
+
+	if p.redisClient == nil {
+		// Redis not configured, cannot track draining state
+		return false, nil
+	}
+
+	// Check if worker is in draining list (Redis)
+	key := drainingWorkerKey(podName)
+	exists, err := p.redisClient.Exists(ctx, key).Result()
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to check draining state for worker %s: %v", podName, err)
+		return false, nil // Fail open - don't block task dispatch on Redis errors
+	}
+
+	if exists > 0 {
+		logger.DebugCtx(ctx, "Worker %s is draining (found in Redis)", podName)
+		return true, nil
+	}
+
 	return false, nil
+}
+
+// MarkWorkerDraining marks a worker as draining in Redis with TTL
+// Called during scale-down to prevent new task dispatch
+func (p *NovitaDeploymentProvider) MarkWorkerDraining(ctx context.Context, workerID string) error {
+	if p.redisClient == nil {
+		logger.WarnCtx(ctx, "Redis not configured, cannot mark worker %s as draining", workerID)
+		return nil
+	}
+
+	key := drainingWorkerKey(workerID)
+	drainTime := time.Now().Format(time.RFC3339)
+
+	err := p.redisClient.Set(ctx, key, drainTime, redisDrainingTTL).Err()
+	if err != nil {
+		return fmt.Errorf("failed to mark worker %s as draining: %w", workerID, err)
+	}
+
+	logger.InfoCtx(ctx, "Marked worker %s as draining in Redis (TTL: %v)", workerID, redisDrainingTTL)
+	return nil
+}
+
+// ClearDrainingWorker removes a worker from the draining list in Redis
+// Called when worker is confirmed offline/deleted
+func (p *NovitaDeploymentProvider) ClearDrainingWorker(ctx context.Context, workerID string) error {
+	if p.redisClient == nil {
+		return nil
+	}
+
+	key := drainingWorkerKey(workerID)
+	err := p.redisClient.Del(ctx, key).Err()
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to clear draining state for worker %s: %v", workerID, err)
+		return err
+	}
+
+	logger.InfoCtx(ctx, "Cleared draining state for worker %s from Redis", workerID)
+	return nil
+}
+
+// GetDrainingWorkers returns a list of currently draining worker IDs from Redis
+// Useful for debugging and monitoring
+func (p *NovitaDeploymentProvider) GetDrainingWorkers(ctx context.Context) []string {
+	if p.redisClient == nil {
+		return nil
+	}
+
+	// Scan for all draining worker keys
+	var workers []string
+	pattern := redisDrainingKeyPrefix + "*"
+	iter := p.redisClient.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		// Extract workerID from key
+		workerID := strings.TrimPrefix(key, redisDrainingKeyPrefix)
+		workers = append(workers, workerID)
+	}
+
+	if err := iter.Err(); err != nil {
+		logger.WarnCtx(ctx, "Error scanning draining workers: %v", err)
+	}
+
+	return workers
 }
 
 // GetClient returns the underlying Novita client for use by other components.

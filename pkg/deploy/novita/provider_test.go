@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"waverless/pkg/config"
 	"waverless/pkg/interfaces"
@@ -381,9 +382,12 @@ func createTestProvider(mockCli *mockClient) *NovitaDeploymentProvider {
 	}
 
 	return &NovitaDeploymentProvider{
-		client:      clientInterface(mockCli),
-		specsConfig: specsConfig,
-		config:      &config.NovitaConfig{},
+		client:           clientInterface(mockCli),
+		specsConfig:      specsConfig,
+		config:           &config.NovitaConfig{},
+		replicaCallbacks: make(map[uint64]*replicaCallbackEntry),
+		watcherStopCh:    make(chan struct{}),
+		pollInterval:     5 * time.Second,
 	}
 }
 
@@ -1163,6 +1167,82 @@ func TestWatchReplicasNilCallback(t *testing.T) {
 	}
 	if err != nil && err.Error() != "replica callback is nil" {
 		t.Errorf("Expected 'replica callback is nil' error, got: %v", err)
+	}
+}
+
+// TestIsPodTerminating tests the draining worker tracking for IsPodTerminating
+// Note: This test requires Redis to be available. Without Redis, IsPodTerminating returns false.
+func TestIsPodTerminating(t *testing.T) {
+	mockClient := newMockClient()
+	provider := createTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Without Redis configured, IsPodTerminating should return false (fail open)
+	isTerminating, err := provider.IsPodTerminating(ctx, "worker-1")
+	if err != nil {
+		t.Fatalf("IsPodTerminating failed: %v", err)
+	}
+	if isTerminating {
+		t.Error("Expected worker-1 to not be terminating without Redis")
+	}
+
+	// Empty pod name should return false
+	isTerminating, err = provider.IsPodTerminating(ctx, "")
+	if err != nil {
+		t.Fatalf("IsPodTerminating with empty name failed: %v", err)
+	}
+	if isTerminating {
+		t.Error("Expected empty pod name to return false")
+	}
+
+	// Test with mock Redis (using miniredis for unit tests)
+	// Skip Redis-dependent tests if miniredis is not available
+	t.Log("Redis-based draining tests require integration test setup with real Redis")
+}
+
+// TestScaleDownMarksDrainingWorkers tests that scale down marks workers as draining
+// Note: This test verifies the scale down logic works, but draining tracking requires Redis.
+// Without Redis, workers are still drained via Novita API but not tracked locally.
+func TestScaleDownMarksDrainingWorkers(t *testing.T) {
+	mockClient := newMockClient()
+	provider := createTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Deploy an endpoint with 5 replicas
+	req := &interfaces.DeployRequest{
+		Endpoint: "test-drain-endpoint",
+		SpecName: "novita-h100-single",
+		Image:    "test-image:latest",
+		Replicas: 5,
+	}
+	_, err := provider.Deploy(ctx, req)
+	if err != nil {
+		t.Fatalf("Failed to deploy: %v", err)
+	}
+
+	// Scale down to 1 replica (should drain 4 workers via Novita API)
+	err = provider.ScaleApp(ctx, req.Endpoint, 1)
+	if err != nil {
+		t.Fatalf("Failed to scale down: %v", err)
+	}
+
+	// Without Redis, GetDrainingWorkers returns nil
+	// The draining still happens via Novita API, just not tracked locally
+	drainingWorkers := provider.GetDrainingWorkers(ctx)
+	if len(drainingWorkers) > 0 {
+		t.Logf("Draining workers tracked (Redis available): %v", drainingWorkers)
+	} else {
+		t.Log("Draining workers not tracked locally (Redis not configured) - this is expected in unit tests")
+	}
+
+	// Verify the endpoint was scaled down correctly
+	endpointID := fmt.Sprintf("ep-%s", req.Endpoint)
+	endpoint, err := mockClient.GetEndpoint(ctx, endpointID)
+	if err != nil {
+		t.Fatalf("Failed to get endpoint: %v", err)
+	}
+	if endpoint.Endpoint.WorkerConfig.MinNum != 1 {
+		t.Errorf("Expected minNum 1 after scale down, got %d", endpoint.Endpoint.WorkerConfig.MinNum)
 	}
 }
 

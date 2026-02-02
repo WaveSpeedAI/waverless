@@ -187,6 +187,11 @@ func (app *Application) initServices() error {
 				novitaDeployProvider.SetSpecRepository(app.specService)
 				logger.InfoCtx(app.ctx, "Spec service injected into Novita provider - specs will be read from database first")
 			}
+			// Inject Redis client for draining workers tracking (multi-replica safe)
+			if app.redisClient != nil {
+				novitaDeployProvider.SetRedisClient(app.redisClient.GetClient())
+				logger.InfoCtx(app.ctx, "Redis client injected into Novita provider - draining workers will be tracked in Redis")
+			}
 		}
 	}
 
@@ -446,6 +451,10 @@ func (app *Application) setupNovitaPodStatusWatcher(novitaProvider *novita.Novit
 		}
 		if err := app.mysqlRepo.Worker.MarkOfflineByPodName(app.ctx, podName); err != nil {
 			logger.WarnCtx(app.ctx, "Failed to mark worker offline for deleted Novita worker %s: %v", workerID, err)
+		}
+		// Clear draining state from Redis when worker is deleted/offline
+		if err := novitaProvider.ClearDrainingWorker(app.ctx, workerID); err != nil {
+			logger.WarnCtx(app.ctx, "Failed to clear draining state for worker %s: %v", workerID, err)
 		}
 	})
 	if err != nil {
