@@ -47,10 +47,13 @@ type endpointState struct {
 
 // workerState stores the last known state of a worker
 type workerState struct {
-	ID       string
-	Endpoint string
-	State    string
-	Healthy  bool
+	ID        string
+	Endpoint  string
+	State     string
+	Healthy   bool
+	CreatedAt *time.Time // First time worker was discovered (for billing start approximation)
+	StartedAt *time.Time // Time when worker state became "running" (billing start)
+	ReadyAt   *time.Time // Time when worker became healthy and running (ready to accept tasks)
 }
 
 // WorkerStatusChangeCallback is called when a worker's status changes
@@ -725,30 +728,74 @@ func (p *NovitaDeploymentProvider) processWorkerState(endpoint string, worker *W
 	}
 
 	workerID := worker.ID
-	currentState := &workerState{
-		ID:       workerID,
-		Endpoint: endpoint,
-		State:    worker.State.State,
-		Healthy:  worker.Healthy,
-	}
+	now := time.Now()
 
 	previousStateInterface, exists := p.workerStates.Load(workerID)
 
 	if !exists {
-		// New worker - trigger status change callback
+		// New worker - record creation time and trigger status change callback
+		currentState := &workerState{
+			ID:        workerID,
+			Endpoint:  endpoint,
+			State:     worker.State.State,
+			Healthy:   worker.Healthy,
+			CreatedAt: &now, // Record when we first discovered this worker
+		}
+
+		// If worker is already running, record started time
+		if worker.State.State == NovitaStatusRunning {
+			currentState.StartedAt = &now
+		}
+
+		// If worker is already healthy and running, record ready time
+		if worker.Healthy && worker.State.State == NovitaStatusRunning {
+			currentState.ReadyAt = &now
+		}
+
 		p.workerStates.Store(workerID, currentState)
-		logger.Infof("New worker detected: %s (endpoint: %s, state: %s)", workerID, endpoint, worker.State.State)
-		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker))
+		logger.Infof("New worker detected: %s (endpoint: %s, state: %s, createdAt: %s)",
+			workerID, endpoint, worker.State.State, now.Format(time.RFC3339))
+		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
 		return
 	}
 
 	previousState := previousStateInterface.(*workerState)
+
+	// Build current state, preserving timestamps from previous state
+	currentState := &workerState{
+		ID:        workerID,
+		Endpoint:  endpoint,
+		State:     worker.State.State,
+		Healthy:   worker.Healthy,
+		CreatedAt: previousState.CreatedAt, // Preserve creation time
+		StartedAt: previousState.StartedAt, // Preserve started time
+		ReadyAt:   previousState.ReadyAt,   // Preserve ready time
+	}
+
+	// Record started time when state transitions to running (only once)
+	if currentState.StartedAt == nil && worker.State.State == NovitaStatusRunning {
+		currentState.StartedAt = &now
+		logger.Infof("Worker %s started running: startedAt=%s (endpoint: %s)",
+			workerID, now.Format(time.RFC3339), endpoint)
+	}
+
+	// Record ready time when worker becomes healthy and running (only once)
+	if currentState.ReadyAt == nil && worker.Healthy && worker.State.State == NovitaStatusRunning {
+		currentState.ReadyAt = &now
+		logger.Infof("Worker %s is now ready: readyAt=%s (endpoint: %s)",
+			workerID, now.Format(time.RFC3339), endpoint)
+	}
+
 	if p.hasWorkerStateChanged(previousState, currentState) {
 		// State changed - trigger status change callback
 		p.workerStates.Store(workerID, currentState)
 		logger.Infof("Worker state changed: %s (endpoint: %s, state: %s -> %s)",
 			workerID, endpoint, previousState.State, currentState.State)
-		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker))
+		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
+	} else if currentState.StartedAt != previousState.StartedAt || currentState.ReadyAt != previousState.ReadyAt {
+		// Timestamps changed but state didn't - still update cache and notify
+		p.workerStates.Store(workerID, currentState)
+		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
 	}
 }
 
@@ -773,7 +820,8 @@ func (p *NovitaDeploymentProvider) detectDeletedWorkers(currentWorkerIDs map[str
 }
 
 // workerToPodInfo converts Novita WorkerInfo to interfaces.PodInfo
-func (p *NovitaDeploymentProvider) workerToPodInfo(worker *WorkerInfo) *interfaces.PodInfo {
+// state parameter is optional - if provided, timestamps will be included
+func (p *NovitaDeploymentProvider) workerToPodInfo(worker *WorkerInfo, state ...*workerState) *interfaces.PodInfo {
 	if worker == nil {
 		return nil
 	}
@@ -792,6 +840,19 @@ func (p *NovitaDeploymentProvider) workerToPodInfo(worker *WorkerInfo) *interfac
 	if worker.Healthy && worker.State.State == NovitaStatusRunning {
 		info.Reason = "Ready"
 		info.Message = "Worker is healthy and running"
+	}
+
+	// Add timestamps if state is provided
+	if len(state) > 0 && state[0] != nil {
+		ws := state[0]
+		if ws.CreatedAt != nil {
+			info.CreatedAt = ws.CreatedAt.Format(time.RFC3339)
+		}
+		if ws.StartedAt != nil {
+			info.StartedAt = ws.StartedAt.Format(time.RFC3339)
+		}
+		// Note: PodInfo doesn't have a ReadyAt field, but we pass StartedAt
+		// The caller (UpsertFromPod) will handle pod_ready_at based on Ready status
 	}
 
 	return info

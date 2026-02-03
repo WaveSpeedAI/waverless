@@ -422,17 +422,42 @@ func (app *Application) setupNovitaPodStatusWatcher(novitaProvider *novita.Novit
 		// For Novita, workerID is the Novita Worker ID (used as podName)
 		podName := workerID
 
-		// Check if this is a new worker (for WORKER_STARTED event)
+		// Check if worker already exists in database
 		existingWorker, _ := app.mysqlRepo.Worker.GetByPodName(app.ctx, endpoint, podName)
 		isNewWorker := existingWorker == nil
 
+		// Parse timestamps from PodInfo (Novita provider generates these locally)
+		var createdAt, startedAt *time.Time
+		if info.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339, info.CreatedAt); err == nil {
+				createdAt = &t
+			}
+		}
+		if info.StartedAt != "" {
+			if t, err := time.Parse(time.RFC3339, info.StartedAt); err == nil {
+				startedAt = &t
+			}
+		}
+		logger.WarnCtx(app.ctx, "existingWorker: %v", existingWorker)
+		// If worker already exists in database, preserve existing timestamps
+		// This handles the case where Novita provider restarts and loses in-memory state
+		// We should not overwrite billing timestamps that were already recorded
+		if existingWorker != nil {
+			if existingWorker.PodCreatedAt != nil {
+				createdAt = nil // Don't update, database already has this
+			}
+			if existingWorker.PodStartedAt != nil {
+				startedAt = nil // Don't update, database already has this
+			}
+		}
+
 		// Create or update worker (status STARTING until heartbeat)
-		// Note: Novita doesn't provide IP/NodeName/CreatedAt/StartedAt, pass nil/empty
-		if err := app.mysqlRepo.Worker.UpsertFromPod(app.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, "", "", nil, nil); err != nil {
+		// Novita doesn't provide IP/NodeName, but now we have timestamps for billing
+		if err := app.mysqlRepo.Worker.UpsertFromPod(app.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, "", "", createdAt, startedAt); err != nil {
 			logger.WarnCtx(app.ctx, "Failed to upsert worker from Novita worker %s: %v", workerID, err)
 		}
 
-		// Record WORKER_STARTED event for new workers
+		// Record WORKER_STARTED event for new workers only
 		if isNewWorker && app.workerEventService != nil {
 			app.workerEventService.RecordWorkerStarted(app.ctx, podName, endpoint)
 		}
