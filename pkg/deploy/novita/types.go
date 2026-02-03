@@ -264,3 +264,19 @@ type RegistryAuthItem struct {
 type DeleteRegistryAuthRequest struct {
 	ID string `json:"id"` // Auth ID to delete
 }
+
+// ========================================
+// Worker Drain Types
+// ========================================
+
+// DrainWorkerRequest represents the request to drain a worker
+type DrainWorkerRequest struct {
+	WorkerID string `json:"workerID"` // Worker ID to drain
+	Drain    bool   `json:"drain"`    // true to drain, false to undrain
+}
+
+// DrainWorkerResponse represents the response from draining a worker
+type DrainWorkerResponse struct {
+	Success bool   `json:"success,omitempty"`
+	Message string `json:"message,omitempty"`
+}

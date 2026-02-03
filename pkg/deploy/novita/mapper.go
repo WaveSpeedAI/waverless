@@ -465,8 +465,9 @@ func mapUpdateRequestToNovita(endpointID string, req *interfaces.UpdateDeploymen
 			})
 		}
 	}
-	healthCheck := &HealthCheck{
-		Path: data.Healthy.Path,
+	healthCheck := &HealthCheck{}
+	if data.Healthy != nil {
+		healthCheck.Path = data.Healthy.Path
 	}
 	// Build flattened update request
 	return &UpdateEndpointRequest{

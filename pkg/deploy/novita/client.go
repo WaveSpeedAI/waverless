@@ -153,6 +153,15 @@ func (c *Client) DeleteRegistryAuth(ctx context.Context, authID string) error {
 	return err
 }
 
+// DrainWorker drains or undrains a worker
+// When drain=true, the worker stops accepting new tasks and will be removed after current tasks complete
+func (c *Client) DrainWorker(ctx context.Context, req *DrainWorkerRequest) error {
+	url := c.baseURL + "/gpu-instance/openapi/v1/endpoint/worker/drain"
+
+	_, err := c.doRequest(ctx, "POST", url, req)
+	return err
+}
+
 // doRequest performs an HTTP request with proper authentication
 func (c *Client) doRequest(ctx context.Context, method, url string, body interface{}) ([]byte, error) {
 	var reqBody io.Reader

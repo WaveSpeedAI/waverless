@@ -29,12 +29,12 @@ type NovitaWorkerStatusMonitor struct {
 	pollInterval time.Duration
 
 	// workerStates tracks the last known state of each worker
-	// key: workerID, value: *workerState
+	// key: workerID, value: *monitorWorkerState
 	workerStates sync.Map
 }
 
-// workerState stores the last known state of a worker
-type workerState struct {
+// monitorWorkerState stores the last known state of a worker for the status monitor
+type monitorWorkerState struct {
 	State     string    // Novita state: "serving", "stopped", "failed", etc.
 	Error     string    // Error code if any
 	Message   string    // State message
@@ -168,7 +168,7 @@ func (m *NovitaWorkerStatusMonitor) handleEndpointFailure(ctx context.Context, e
 
 	// Check if we've already reported this failure
 	if prevState, ok := m.workerStates.Load(workerID); ok {
-		prev := prevState.(*workerState)
+		prev := prevState.(*monitorWorkerState)
 		if prev.State == state.State && prev.Error == state.Error && prev.Message == state.Message {
 			return // No change, skip
 		}
@@ -184,7 +184,7 @@ func (m *NovitaWorkerStatusMonitor) handleEndpointFailure(ctx context.Context, e
 		endpointName, failureInfo.Type, state.State, state.Error)
 
 	// Update state cache
-	m.workerStates.Store(workerID, &workerState{
+	m.workerStates.Store(workerID, &monitorWorkerState{
 		State:     state.State,
 		Error:     state.Error,
 		Message:   state.Message,
@@ -208,7 +208,7 @@ func (m *NovitaWorkerStatusMonitor) checkWorkerState(ctx context.Context, worker
 	if !m.isWorkerFailed(worker) {
 		// Worker is healthy, clear any previous failure state
 		if hasPrevState {
-			prev := prevStateInterface.(*workerState)
+			prev := prevStateInterface.(*monitorWorkerState)
 			if prev.State == "failed" || prev.Error != "" {
 				// Worker recovered, clear failure in database
 				if m.workerRepo != nil {
@@ -220,7 +220,7 @@ func (m *NovitaWorkerStatusMonitor) checkWorkerState(ctx context.Context, worker
 		}
 
 		// Update state cache
-		m.workerStates.Store(workerID, &workerState{
+		m.workerStates.Store(workerID, &monitorWorkerState{
 			State:     worker.State.State,
 			Error:     worker.State.Error,
 			Message:   worker.State.Message,
@@ -233,7 +233,7 @@ func (m *NovitaWorkerStatusMonitor) checkWorkerState(ctx context.Context, worker
 	// Worker is in failed state
 	// Check if state has changed
 	if hasPrevState {
-		prev := prevStateInterface.(*workerState)
+		prev := prevStateInterface.(*monitorWorkerState)
 		if prev.State == worker.State.State &&
 			prev.Error == worker.State.Error &&
 			prev.Message == worker.State.Message {
@@ -258,7 +258,7 @@ func (m *NovitaWorkerStatusMonitor) checkWorkerState(ctx context.Context, worker
 	}
 
 	// Update state cache
-	m.workerStates.Store(workerID, &workerState{
+	m.workerStates.Store(workerID, &monitorWorkerState{
 		State:     worker.State.State,
 		Error:     worker.State.Error,
 		Message:   worker.State.Message,

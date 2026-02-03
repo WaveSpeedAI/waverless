@@ -58,6 +58,10 @@ func (m *mockClientForStatusMonitor) DeleteRegistryAuth(ctx context.Context, aut
 	return nil
 }
 
+func (m *mockClientForStatusMonitor) DrainWorker(ctx context.Context, req *DrainWorkerRequest) error {
+	return nil
+}
+
 func (m *mockClientForStatusMonitor) getCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

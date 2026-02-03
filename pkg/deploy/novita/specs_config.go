@@ -22,7 +22,7 @@ type SpecRepositoryInterface interface {
 	ListSpecs(ctx context.Context) ([]*interfaces.SpecInfo, error)
 }
 
-// ResourceSpec 资源规格定义
+// ResourceSpec defines resource specification
 type ResourceSpec struct {
 	Name        string                    `yaml:"name" json:"name"`
 	DisplayName string                    `yaml:"displayName" json:"displayName"`
@@ -31,7 +31,7 @@ type ResourceSpec struct {
 	Platforms   map[string]PlatformConfig `yaml:"platforms" json:"platforms"`
 }
 
-// SpecResources 规格资源
+// SpecResources defines spec resources
 type SpecResources struct {
 	CPU              string `yaml:"cpu,omitempty" json:"cpu,omitempty"`
 	Memory           string `yaml:"memory" json:"memory"`
@@ -41,7 +41,7 @@ type SpecResources struct {
 	ShmSize          string `yaml:"shmSize,omitempty" json:"shmSize,omitempty"` // Shared memory size
 }
 
-// PlatformConfig 平台特定配置
+// PlatformConfig defines platform-specific configuration
 type PlatformConfig struct {
 	ProductID   string `yaml:"productId" json:"productId"`
 	Region      string `yaml:"region" json:"region"`
