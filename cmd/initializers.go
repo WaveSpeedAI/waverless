@@ -120,6 +120,7 @@ func (app *Application) initServices() error {
 	app.workerService = service.NewWorkerService(
 		app.mysqlRepo.Worker,
 		app.mysqlRepo.Task,
+		app.mysqlRepo.Monitoring,
 		app.deploymentProvider,
 	)
 

@@ -96,6 +96,10 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 // HandleWorkerDelete handles Worker deletion
 // Thread-safe: Can be called concurrently for different workers
 // Idempotent: Safe to call multiple times for the same worker
+//
+// NOTE: Due to async event processing, Pod Delete event may arrive before
+// the Worker record is created (race condition during rapid scale up/down).
+// We retry a few times to handle this edge case.
 func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) {
 	if event == nil {
 		return
@@ -109,10 +113,41 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 		h.workerEventService.RecordWorkerOffline(h.ctx, podName, endpoint, podName)
 	}
 
-	// Mark Worker as OFFLINE
-	if err := h.workerRepo.MarkOfflineByPodName(h.ctx, podName); err != nil {
-		logger.WarnCtx(h.ctx, "Failed to mark worker offline for deleted pod %s: %v", podName, err)
+	// Mark Worker as OFFLINE with retry
+	// Retry is needed because Pod Delete event may arrive before Worker record is created
+	// (race condition when K8s rapidly creates and deletes a pod)
+	maxRetries := 3
+	retryInterval := 500 * time.Millisecond
+
+	for i := 0; i < maxRetries; i++ {
+		err := h.workerRepo.MarkOfflineByPodName(h.ctx, podName)
+		if err != nil {
+			logger.WarnCtx(h.ctx, "Failed to mark worker offline for deleted pod %s (attempt %d/%d): %v",
+				podName, i+1, maxRetries, err)
+			if i < maxRetries-1 {
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+
+		// Check if any rows were actually updated
+		// MarkOfflineByPodName returns nil even if no rows matched
+		worker, _ := h.workerRepo.GetByPodName(h.ctx, endpoint, podName)
+		if worker != nil && worker.Status == "OFFLINE" {
+			logger.InfoCtx(h.ctx, "Successfully marked worker %s as OFFLINE", podName)
+			return
+		}
+
+		// Worker record might not exist yet, wait and retry
+		if i < maxRetries-1 {
+			logger.DebugCtx(h.ctx, "Worker record for pod %s not found or not updated, retrying in %v...",
+				podName, retryInterval)
+			time.Sleep(retryInterval)
+		}
 	}
+
+	logger.WarnCtx(h.ctx, "Failed to mark worker offline for pod %s after %d retries (worker may not exist yet)",
+		podName, maxRetries)
 }
 
 // HandleWorkerDraining handles Worker Draining
