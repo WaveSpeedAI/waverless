@@ -1,114 +1,103 @@
 <div align="center">
-  <a href="https://wavespeed.ai" target="_blank" rel="noopener noreferrer">
+  <a href="https://wavespeed.ai" target="_blank">
     <img src="docs/images/wavespeed-dark-logo.png" alt="WaveSpeedAI Logo" width="200"/>
   </a>
 
   <h1>Waverless</h1>
-
+  <p><strong>High-performance Serverless GPU Task Orchestration System</strong></p>
   <p>
-    <strong>High-performance Serverless GPU task orchestration system</strong>
-  </p>
-
-  <p>
-    <a href="https://wavespeed.ai"
-    target="_blank" rel="noopener noreferrer">🌐 Visit wavespeed.ai</a> •
-    <a href="docs/USER_GUIDE.md">📖 Documentation</a> •
-    <a href="https://github.com/wavespeedai/waverless/issues">💬 Issues</a>
+    <a href="https://wavespeed.ai">🌐 wavespeed.ai</a> •
+    <a href="docs/ARCHITECTURE.md">📐 Architecture</a> •
+    <a href="docs/USER_GUIDE.md">📖 User Guide</a> •
+    <a href="docs/DEVELOPER_GUIDE.md">🔧 Developer Guide</a>
   </p>
 </div>
 
 ---
 
-## Overview
+## Features
 
-Waverless is a high-performance Serverless GPU task orchestration system designed for AI inference and training workloads, powered by [WaveSpeedAI](https://wavespeed.ai).
+- 🚀 **Pull-based Architecture** - Workers actively pull tasks for better load balancing
+- 🔌 **RunPod Compatible** - Zero-code migration from runpod-python SDK
+- ☸️ **Multi-Provider** - Kubernetes, Novita Serverless, Docker backends
+- 📊 **Smart Autoscaling** - Queue-depth, priority, and resource-aware scaling
+- 🛡️ **Graceful Shutdown** - Zero task loss during rolling updates
 
-## Core Features
+## Architecture
 
-- 🚀 **Pull-based Architecture** - Workers actively pull tasks for better load balancing and fault tolerance
-- 🔌 **RunPod Compatible** - Fully compatible with runpod-python SDK, no code modification needed
-- ☸️ **Kubernetes Native** - Built-in K8s application management, supports deploying GPU workloads via API
-- 📊 **Multi-Endpoint Routing** - Supports multiple independent task queues and worker pools
-- 🌐 **Web Management Interface** - React-based modern UI for visual deployment and monitoring
-- ⚡ **Auto Scaling** - Automatically adjusts worker count based on queue depth
+```mermaid
+flowchart TB
+    subgraph Clients
+        direction LR
+        Client[Client V1 API]
+        WebUI[Web UI]
+    end
+
+    subgraph Core["Waverless API Server"]
+        direction TB
+        Queue[Task Queue]
+        WM[Worker Mgmt]
+        Autoscaler[Autoscaler]
+        Store[(Redis + MySQL)]
+    end
+
+    subgraph Provider
+        direction LR
+        K8s[K8s]
+        Novita[Novita]
+        Docker[Docker]
+    end
+
+    subgraph Workers
+        direction LR
+        W1[Worker A]
+        W2[Worker B]
+        W3[Worker ...]
+    end
+
+    Clients -->|submit| Core
+    Core --> Provider
+    Provider -->|manage| Workers
+    Workers -->|pull tasks| Core
+
+    style Clients fill:#4a90a4,color:#fff
+    style Core fill:#2d5a7b,color:#fff
+    style Provider fill:#5d8aa8,color:#fff
+    style Workers fill:#7fb3d3,color:#000
+```
 
 ## Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/wavespeedai/waverless.git
-cd waverless
+# Local development
+docker-compose up -d mysql redis
+cp config/config.example.yaml config/config.yaml
+go run cmd/main.go
 
-# Deploy complete environment
+# Kubernetes deployment
 ./deploy.sh install
-
-# Access Web UI
-kubectl port-forward -n wavespeed svc/waverless-web-svc 3000:80
-# Visit http://localhost:3000 (default: admin/admin)
 ```
 
-**For detailed deployment, configuration, and usage**, see [User Guide](docs/USER_GUIDE.md).
+## API Example
 
-## Architecture
-
-```
-┌─────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Client    │ submit  │   Waverless      │  pull   │   Worker    │
-│             ├────────>│   API Server     │<────────┤  (RunPod)   │
-│  (V1 API)   │         │                  │         │ Endpoint: A │
-└─────────────┘         │  - Task Queue    │         └─────────────┘
-                        │  - Worker Mgmt   │
-┌─────────────┐  API    │  - K8s Manager   │         ┌─────────────┐
-│  Web UI     │ Request │                  │  pull   │   Worker    │
-│(React+Nginx)├────────>│  Redis + MySQL   │<────────┤  (RunPod)   │
-│             │         │                  │         │ Endpoint: B │
-└─────────────┘         └──────────────────┘         └─────────────┘
-```
-
-**See [System Architecture](docs/ARCHITECTURE.md) for detailed design.**
-
-## API Usage
-
-Waverless provides RunPod-compatible V1/V2 APIs and K8s management APIs.
-
-**Quick Example**:
 ```bash
 # Submit task
-curl -X POST http://localhost:8080/v1/wan22/run \
+curl -X POST http://localhost:8090/v1/my-endpoint/run \
   -H "Content-Type: application/json" \
-  -d '{"input": {"prompt": "a beautiful landscape"}}'
+  -d '{"input": {"prompt": "hello world"}}'
 
-# Query status
-curl http://localhost:8080/v1/status/{task_id}
+# Check status
+curl http://localhost:8090/v1/status/{task_id}
 ```
-
-**See [User Guide](docs/USER_GUIDE.md) for complete API documentation and usage examples.**
 
 ## Documentation
 
-Waverless documentation has been streamlined into 3 core documents:
-
-| Document | Description | Audience |
-|----------|-------------|----------|
-| [User Guide](docs/USER_GUIDE.md) | Quick start, configuration, autoscaling, Web UI, and troubleshooting | Users, Operators |
-| [Architecture](docs/ARCHITECTURE.md) | System architecture, components, data models, statistics, and GPU tracking | Architects, System Designers |
-| [Developer Guide](docs/DEVELOPER_GUIDE.md) | Advanced topics, graceful shutdown, concurrency safety, task tracking internals | Developers, Contributors |
-
-### Quick Links by Role
-
-**New Users**: Start with [User Guide](docs/USER_GUIDE.md) → Quick Start section
-
-**Operators**: [User Guide](docs/USER_GUIDE.md) → Configuration & Troubleshooting sections
-
-**Developers**: [Architecture](docs/ARCHITECTURE.md) → [Developer Guide](docs/DEVELOPER_GUIDE.md)
-
-**Architects**: [Architecture](docs/ARCHITECTURE.md) for complete system design
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System design, components, data flow, lifecycle |
+| [User Guide](docs/USER_GUIDE.md) | Deployment, API reference, autoscaling, troubleshooting |
+| [Developer Guide](docs/DEVELOPER_GUIDE.md) | Code structure, core design, provider integration |
 
 ## License
 
 MIT License
-
-## Contact
-
-- GitHub: https://github.com/wavespeedai/waverless
-- Issues: https://github.com/wavespeedai/waverless/issues

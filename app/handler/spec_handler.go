@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"waverless/pkg/capacity"
 	"waverless/internal/service"
+	"waverless/pkg/capacity"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/store/mysql"
@@ -170,7 +170,6 @@ func (h *SpecHandler) DeleteSpec(c *gin.Context) {
 	})
 }
 
-
 // ListSpecsWithCapacity lists all specs with capacity status
 // @Summary List specs with capacity
 // @Description Get all specs with their capacity availability status
@@ -186,7 +185,7 @@ func (h *SpecHandler) ListSpecsWithCapacity(c *gin.Context) {
 		return
 	}
 
-	// 获取所有 capacity 信息
+	// Get all capacity info
 	var capMap = make(map[string]*interfaces.SpecWithCapacity)
 	if h.capacityRepo != nil {
 		caps, _ := h.capacityRepo.List(c.Request.Context())

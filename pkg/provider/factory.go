@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"waverless/pkg/config"
-	"waverless/pkg/deploy/docker"
-	"waverless/pkg/deploy/k8s"
-	"waverless/pkg/deploy/novita"
 	"waverless/pkg/interfaces"
+	"waverless/pkg/provider/docker"
+	"waverless/pkg/provider/k8s"
+	"waverless/pkg/provider/novita"
 )
 
 // ProviderFactory provider factory

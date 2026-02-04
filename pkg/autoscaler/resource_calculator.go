@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	endpointsvc "waverless/internal/service/endpoint"
-	"waverless/pkg/deploy/k8s"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider/k8s"
 )
 
 // ResourceCalculator resource calculator
@@ -117,20 +117,20 @@ func (c *ResourceCalculator) CalculateClusterResources(ctx context.Context, endp
 		}
 	}
 
-	// 计算可用资源
+	// Calculate available resources
 	cluster.Available.Subtract(&cluster.Used)
 
 	return cluster, nil
 }
 
-// parseCPU 解析 CPU 字符串（如 "4", "4000m"）
+// parseCPU parses CPU string (e.g., "4", "4000m")
 func parseCPU(cpuStr string) (float64, error) {
 	cpuStr = strings.TrimSpace(cpuStr)
 	if cpuStr == "" {
 		return 1.0, nil
 	}
 
-	// 处理 millicores 格式（如 "4000m"）
+	// Handle millicores format (e.g., "4000m")
 	if strings.HasSuffix(cpuStr, "m") {
 		milliStr := strings.TrimSuffix(cpuStr, "m")
 		milli, err := strconv.ParseFloat(milliStr, 64)
@@ -140,7 +140,7 @@ func parseCPU(cpuStr string) (float64, error) {
 		return milli / 1000.0, nil
 	}
 
-	// 处理普通数字格式（如 "4"）
+	// Handle plain number format (e.g., "4")
 	cores, err := strconv.ParseFloat(cpuStr, 64)
 	if err != nil {
 		return 0, err
@@ -148,14 +148,14 @@ func parseCPU(cpuStr string) (float64, error) {
 	return cores, nil
 }
 
-// parseMemory 解析内存字符串（如 "8Gi", "8192Mi", "8GB"）
+// parseMemory parses memory string (e.g., "8Gi", "8192Mi", "8GB")
 func parseMemory(memStr string) (float64, error) {
 	memStr = strings.TrimSpace(memStr)
 	if memStr == "" {
 		return 1.0, nil
 	}
 
-	// 移除可能的单位
+	// Remove possible units
 	memStr = strings.ToUpper(memStr)
 
 	// Gibibyte (1 GiB = 1024 MiB)
@@ -176,7 +176,7 @@ func parseMemory(memStr string) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		return num * 0.93, nil // 近似转换 GB 到 GiB
+		return num * 0.93, nil // Approximate conversion from GB to GiB
 	}
 
 	// Mebibyte (1 MiB = 1024 KiB)
@@ -200,7 +200,7 @@ func parseMemory(memStr string) (float64, error) {
 		return num / 1024.0 * 0.93, nil
 	}
 
-	// 默认当作数字，单位为 GB
+	// Default: treat as number in GB
 	num, err := strconv.ParseFloat(memStr, 64)
 	if err != nil {
 		return 0, err
@@ -208,8 +208,8 @@ func parseMemory(memStr string) (float64, error) {
 	return num, nil
 }
 
-// getEndpointMetadata 获取 endpoint metadata（辅助方法）
+// getEndpointMetadata gets endpoint metadata (helper method)
 func (c *ResourceCalculator) getEndpointMetadata(ctx context.Context, name string) (*interfaces.EndpointMetadata, error) {
-	// 从 endpoint service 获取
+	// Get from endpoint service
 	return c.endpointService.GetEndpoint(ctx, name)
 }

@@ -88,11 +88,6 @@ func (s *TaskService) recordTaskQueued(ctx context.Context, task *mysqlModel.Tas
 	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskQueued, "", "", "")
 }
 
-// Helper method to record TASK_ASSIGNED event
-func (s *TaskService) recordTaskAssigned(ctx context.Context, task *mysqlModel.Task, workerID string, workerPodName string) {
-	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskAssigned, workerID, workerPodName, "")
-}
-
 // Helper method to record TASK_COMPLETED event
 func (s *TaskService) recordTaskCompleted(ctx context.Context, task *mysqlModel.Task, workerID string) {
 	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskCompleted, workerID, "", "")
@@ -108,48 +103,13 @@ func (s *TaskService) recordTaskOrphaned(ctx context.Context, task *mysqlModel.T
 	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskOrphaned, task.WorkerID, "", "worker lost connection")
 }
 
-// Helper method to record TASK_REQUEUED event
-func (s *TaskService) recordTaskRequeued(ctx context.Context, task *mysqlModel.Task, reason string) {
-	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskRequeued, "", "", reason)
-}
-
 // Helper method to record TASK_TIMEOUT event
 func (s *TaskService) recordTaskTimeout(ctx context.Context, task *mysqlModel.Task) {
 	s.recordTaskEvent(ctx, task, mysqlModel.EventTaskTimeout, task.WorkerID, "", "task execution timeout")
 }
 
-// recordTaskEventOnly 只记录事件到 task_events 表，不更新 task.extend 字段
-// 用于 extend 字段已经在其他地方更新的情况（如 AssignTasksToWorker 中）
-func (s *TaskService) recordTaskEventOnly(
-	ctx context.Context,
-	task *mysqlModel.Task,
-	eventType mysqlModel.TaskEventType,
-	workerID string,
-	workerPodName string,
-	fromStatus string,
-	errorMsg string,
-) {
-	// 只异步记录事件到 task_events 表
-	go func() {
-		event := &mysqlModel.TaskEvent{
-			TaskID:        task.TaskID,
-			Endpoint:      task.Endpoint,
-			EventType:     string(eventType),
-			EventTime:     time.Now(),
-			WorkerID:      workerID,
-			WorkerPodName: workerPodName,
-			FromStatus:    fromStatus,
-			ErrorMessage:  errorMsg,
-		}
-
-		if err := s.taskEventRepo.RecordEvent(context.Background(), event); err != nil {
-			logger.ErrorCtx(context.Background(), "failed to record task event: %v", err)
-		}
-	}()
-}
-
-// recordTaskAssignedEventOnly 只记录 TASK_ASSIGNED 事件，不更新 extend
-// 用于任务已经通过 AssignTasksToWorker 完成所有更新的情况
+// recordTaskAssignedEventOnly records only the TASK_ASSIGNED event without updating extend
+// Used when task has already been fully updated via AssignTasksToWorker
 func (s *TaskService) recordTaskAssignedEventOnly(ctx context.Context, task *mysqlModel.Task, workerID string, workerPodName string) {
 	go func() {
 		now := time.Now()

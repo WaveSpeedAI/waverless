@@ -15,9 +15,9 @@ import (
 
 	"waverless/internal/service"
 	endpointsvc "waverless/internal/service/endpoint"
-	"waverless/pkg/deploy/k8s"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider/k8s"
 	"waverless/pkg/status"
 
 	"github.com/gin-gonic/gin"

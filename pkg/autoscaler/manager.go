@@ -11,13 +11,19 @@ import (
 
 	"waverless/internal/model"
 	endpointsvc "waverless/internal/service/endpoint"
-	"waverless/pkg/deploy/k8s"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider/k8s"
 	"waverless/pkg/store/mysql"
+	redisstore "waverless/pkg/store/redis"
 )
 
-// Manager 自动扩缩容管理器
+const (
+	// autoscalerLockKey is the key name for the distributed lock
+	autoscalerLockKey = "autoscaler:global-lock"
+)
+
+// Manager is the autoscaler manager
 type Manager struct {
 	config             *Config
 	enabled            bool
@@ -38,18 +44,18 @@ type Manager struct {
 	scalingEventRepo   *mysql.ScalingEventRepository
 	lastRunTime        time.Time
 	specManager        *k8s.SpecManager
-	redisClient        *redis.Client           // Redis用于全局配置存储
-	configKey          string                  // 全局配置key
-	distributedLock    DistributedLock         // 分布式锁，防止多副本冲突
-	workerLister       interfaces.WorkerLister // For worker queries
+	redisClient        *redis.Client              // Redis for global config storage
+	configKey          string                     // Global config key
+	distributedLock    redisstore.DistributedLock // Distributed lock to prevent multi-replica conflicts
+	workerLister       interfaces.WorkerLister    // For worker queries
 
-	// 缓存集群资源状态，避免每次 API 调用都重新计算
+	// Cache cluster resource status to avoid recalculating on every API call
 	cachedClusterMu        sync.RWMutex
 	cachedClusterResources *ClusterResources
 	cachedClusterTime      time.Time
 }
 
-// NewManager 创建自动扩缩容管理器
+// NewManager creates an autoscaler manager
 func NewManager(
 	config *Config,
 	deploymentProvider interfaces.DeploymentProvider,
@@ -66,8 +72,9 @@ func NewManager(
 	executor := NewExecutor(deploymentProvider, endpointService, scalingEventRepo, workerLister, taskRepo, endpointRepo)
 	metricsCollector := NewMetricsCollector(deploymentProvider, endpointService, workerLister, taskRepo)
 
-	// 创建分布式锁（如果 redisClient 为 nil，锁会自动降级为单实例模式）
-	distributedLock := NewRedisDistributedLock(redisClient, autoscalerLockKey)
+	// Create distributed lock (if redisClient is nil, lock will automatically degrade to single-instance mode)
+	lockStore := redisstore.NewLockStore(redisClient)
+	distributedLock := lockStore.NewLock(autoscalerLockKey, nil)
 
 	manager := &Manager{
 		config:             config,
@@ -90,12 +97,12 @@ func NewManager(
 		distributedLock:    distributedLock,
 	}
 
-	// 从Redis加载全局配置（如果存在）
+	// Load global config from Redis (if exists)
 	manager.loadPersistedConfig(context.Background())
 	return manager
 }
 
-// Start 启动自动扩缩容控制循环
+// Start starts the autoscaler control loop
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	if m.running {
@@ -108,16 +115,16 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	logger.InfoCtx(ctx, "starting autoscaler, interval: %d seconds", m.config.Interval)
 
-	// 启动副本变化监听
+	// Start replica change watcher
 	m.startReplicaWatcher(ctx)
 
-	// 启动控制循环
+	// Start control loop
 	go m.controlLoop(ctx)
 
 	return nil
 }
 
-// Stop 停止自动扩缩容
+// Stop stops the autoscaler
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -146,7 +153,7 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-// controlLoop 控制循环
+// controlLoop is the main control loop
 func (m *Manager) controlLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Duration(m.config.Interval) * time.Second)
 	defer ticker.Stop()
@@ -253,25 +260,25 @@ func (m *Manager) triggerAutoscaler() {
 	}
 }
 
-// runOnce 执行一次扩缩容决策
+// runOnce executes one autoscaling decision cycle
 func (m *Manager) runOnce(ctx context.Context) error {
-	// 🔍 DEBUG: 记录每次 runOnce 调用
+	// 🔍 DEBUG: Log each runOnce call
 	logger.InfoCtx(ctx, "autoscaler runOnce called at %s", time.Now().Format("2006-01-02 15:04:05.000"))
 
-	// 🔒 关键改进：使用分布式锁防止多副本冲突
-	// 尝试获取分布式锁
+	// 🔒 Key improvement: Use distributed lock to prevent multi-replica conflicts
+	// Try to acquire distributed lock
 	acquired, err := m.distributedLock.TryLock(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire distributed lock: %w", err)
 	}
 
 	if !acquired {
-		// 另一个副本正在执行扩缩容，跳过本次执行
+		// Another replica is executing autoscaling, skip this run
 		logger.DebugCtx(ctx, "autoscaler lock held by another instance, skipping this run")
 		return nil
 	}
 
-	// 确保释放锁
+	// Ensure lock is released
 	defer func() {
 		if err := m.distributedLock.Unlock(ctx); err != nil {
 			logger.ErrorCtx(ctx, "failed to release distributed lock: %v", err)
@@ -284,13 +291,13 @@ func (m *Manager) runOnce(ctx context.Context) error {
 
 	logger.DebugCtx(ctx, "autoscaler running (lock acquired)...")
 
-	// Step 1: 收集所有 endpoint 的指标
+	// Step 1: Collect metrics for all endpoints
 	endpoints, err := m.metricsCollector.CollectEndpointMetrics(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to collect metrics: %w", err)
 	}
 
-	// 🔍 DEBUG: 记录收集到的 endpoint 状态
+	// 🔍 DEBUG: Log collected endpoint status
 	for _, ep := range endpoints {
 		logger.InfoCtx(ctx, "collected metrics for %s: replicas(desired)=%d, actualReplicas(ready)=%d, pending=%d, running=%d",
 			ep.Name, ep.Replicas, ep.ActualReplicas, ep.PendingTasks, ep.RunningTasks)
@@ -319,7 +326,7 @@ func (m *Manager) runOnce(ctx context.Context) error {
 	// Use filtered endpoints for resource calculation and decision making
 	endpoints = enabledEndpoints
 
-	// Step 2: 计算集群资源使用情况
+	// Step 2: Calculate cluster resource usage
 	maxResources := &Resources{
 		GPUCount: m.config.MaxGPUCount,
 		CPUCores: float64(m.config.MaxCPUCores),
@@ -330,7 +337,7 @@ func (m *Manager) runOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to calculate cluster resources: %w", err)
 	}
 
-	// 更新缓存
+	// Update cache
 	m.cachedClusterMu.Lock()
 	m.cachedClusterResources = clusterResources
 	m.cachedClusterTime = time.Now()
@@ -339,7 +346,7 @@ func (m *Manager) runOnce(ctx context.Context) error {
 	logger.DebugCtx(ctx, "cluster resources: total=%+v, used=%+v, available=%+v",
 		clusterResources.Total, clusterResources.Used, clusterResources.Available)
 
-	// Step 3: 做出扩缩容决策
+	// Step 3: Make scaling decisions
 	decisions, err := m.decisionEngine.MakeDecisions(ctx, endpoints, clusterResources)
 	if err != nil {
 		return fmt.Errorf("failed to make decisions: %w", err)
@@ -358,18 +365,18 @@ func (m *Manager) runOnce(ctx context.Context) error {
 		}
 	}
 
-	// Step 4: 执行决策
+	// Step 4: Execute decisions
 	if err := m.executor.ExecuteDecisions(ctx, decisions); err != nil {
 		return fmt.Errorf("failed to execute decisions: %w", err)
 	}
 
-	// Step 4.5: 检查长时间空闲的 worker，触发主动缩容
+	// Step 4.5: Check for long-idle workers and trigger proactive scale-down
 	if err := m.checkAndScaleDownIdleWorkers(ctx, endpoints); err != nil {
 		logger.WarnCtx(ctx, "failed to check idle workers: %v", err)
 		// Don't fail the entire autoscaling process if idle worker check fails
 	}
 
-	// Step 5: 清理过期事件（超过7天）
+	// Step 5: Clean up expired events (older than 7 days)
 	cutoffTime := time.Now().Add(-7 * 24 * time.Hour)
 	if deleted, err := m.scalingEventRepo.DeleteOldEvents(ctx, cutoffTime); err != nil {
 		logger.WarnCtx(ctx, "failed to cleanup old events: %v", err)
@@ -463,13 +470,13 @@ func (m *Manager) runForTargets(ctx context.Context, targets []string) error {
 	return nil
 }
 
-// TriggerScale 手动触发扩缩容
+// TriggerScale manually triggers scaling
 func (m *Manager) TriggerScale(ctx context.Context, endpoint string) error {
 	logger.InfoCtx(ctx, "manually triggering scale for endpoint: %s", endpoint)
 	return m.runOnce(ctx)
 }
 
-// GetClusterResourcesOnly 获取集群资源状态（轻量接口，优先使用缓存）
+// GetClusterResourcesOnly gets cluster resource status (lightweight API, prefers cache)
 func (m *Manager) GetClusterResourcesOnly(ctx context.Context) (*ClusterResourcesStatus, error) {
 	m.mu.RLock()
 	enabled := m.enabled
@@ -482,7 +489,7 @@ func (m *Manager) GetClusterResourcesOnly(ctx context.Context) (*ClusterResource
 	cachedTime := m.cachedClusterTime
 	m.cachedClusterMu.RUnlock()
 
-	// 如果没有缓存或缓存过期（超过30秒），实时计算一次
+	// If no cache or cache expired (over 30 seconds), calculate in real-time
 	if cached == nil || time.Since(cachedTime) > 30*time.Second {
 		endpoints, err := m.metricsCollector.CollectEndpointMetrics(ctx)
 		if err != nil {
@@ -497,7 +504,7 @@ func (m *Manager) GetClusterResourcesOnly(ctx context.Context) (*ClusterResource
 		if err != nil {
 			return nil, err
 		}
-		// 更新缓存
+		// Update cache
 		m.cachedClusterMu.Lock()
 		m.cachedClusterResources = cached
 		m.cachedClusterTime = time.Now()
@@ -512,7 +519,7 @@ func (m *Manager) GetClusterResourcesOnly(ctx context.Context) (*ClusterResource
 	}, nil
 }
 
-// GetStatus 获取自动扩缩容状态
+// GetStatus gets autoscaler status
 func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 	m.mu.RLock()
 	enabled := m.enabled
@@ -526,7 +533,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 		LastRunTime: lastRunTime,
 	}
 
-	// 收集 endpoint 状态
+	// Collect endpoint status
 	endpoints, err := m.metricsCollector.CollectEndpointMetrics(ctx)
 	if err != nil {
 		return nil, err
@@ -544,7 +551,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 			waitingTime = time.Since(ep.FirstPendingTime).Seconds()
 		}
 
-		// 计算资源使用
+		// Calculate resource usage
 		resourceUsage, _ := m.resourceCalculator.CalculateEndpointResource(ctx, ep, ep.ActualReplicas)
 		if resourceUsage == nil {
 			resourceUsage = &Resources{}
@@ -571,7 +578,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 	}
 	status.Endpoints = endpointStatuses
 
-	// 计算集群资源
+	// Calculate cluster resources
 	maxResources := &Resources{
 		GPUCount: m.config.MaxGPUCount,
 		CPUCores: float64(m.config.MaxCPUCores),
@@ -583,7 +590,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 	}
 	status.ClusterResources = *clusterResources
 
-	// 获取最近的事件
+	// Get recent events
 	recentEvents, err := m.scalingEventRepo.ListRecent(ctx, 20)
 	if err != nil {
 		logger.WarnCtx(ctx, "failed to list recent events: %v", err)
@@ -608,7 +615,7 @@ func (m *Manager) GetStatus(ctx context.Context) (*AutoScalerStatus, error) {
 	return status, nil
 }
 
-// GetScalingHistory 获取扩缩容历史
+// GetScalingHistory gets scaling history
 func (m *Manager) GetScalingHistory(ctx context.Context, endpoint string, limit int) ([]*ScalingEvent, error) {
 	mysqlEvents, err := m.scalingEventRepo.ListByEndpoint(ctx, endpoint, limit)
 	if err != nil {
@@ -634,7 +641,7 @@ func (m *Manager) GetScalingHistory(ctx context.Context, endpoint string, limit 
 	return events, nil
 }
 
-// Enable 启用自动扩缩容
+// Enable enables autoscaler
 func (m *Manager) Enable() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -642,11 +649,11 @@ func (m *Manager) Enable() {
 	m.config.Enabled = true
 	logger.Info("autoscaler enabled")
 
-	// 持久化配置，避免重启后状态丢失
+	// Persist config to avoid state loss after restart
 	m.persistConfig(context.Background())
 }
 
-// Disable 禁用自动扩缩容
+// Disable disables autoscaler
 func (m *Manager) Disable() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -654,25 +661,25 @@ func (m *Manager) Disable() {
 	m.config.Enabled = false
 	logger.Info("autoscaler disabled")
 
-	// 持久化配置，避免重启后状态丢失
+	// Persist config to avoid state loss after restart
 	m.persistConfig(context.Background())
 }
 
-// IsEnabled 检查是否启用
+// IsEnabled checks if autoscaler is enabled
 func (m *Manager) IsEnabled() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.enabled
 }
 
-// shouldProcessEndpoint 检查是否应该处理该endpoint的自动扩缩容
-// 优先级：endpoint覆盖配置 > 全局配置
+// shouldProcessEndpoint checks if autoscaling should be processed for this endpoint
+// Priority: endpoint override config > global config
 func (m *Manager) shouldProcessEndpoint(endpoint *EndpointConfig) bool {
 	m.mu.RLock()
 	globalEnabled := m.enabled
 	m.mu.RUnlock()
 
-	// 如果endpoint有明确的覆盖配置，使用覆盖配置
+	// If endpoint has explicit override config, use override config
 	if endpoint.AutoscalerEnabled != nil && *endpoint.AutoscalerEnabled != "" {
 		switch *endpoint.AutoscalerEnabled {
 		case "enabled":
@@ -682,23 +689,23 @@ func (m *Manager) shouldProcessEndpoint(endpoint *EndpointConfig) bool {
 		}
 	}
 
-	// 否则使用全局配置
+	// Otherwise use global config
 	return globalEnabled
 }
 
-// IsRunning 检查是否正在运行
+// IsRunning checks if autoscaler is running
 func (m *Manager) IsRunning() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.running
 }
 
-// UpdateGlobalConfig 更新全局配置
+// UpdateGlobalConfig updates global config
 func (m *Manager) UpdateGlobalConfig(ctx context.Context, config *Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 验证配置参数
+	// Validate config parameters
 	if config.Interval <= 0 {
 		return fmt.Errorf("interval must be greater than 0")
 	}
@@ -715,7 +722,7 @@ func (m *Manager) UpdateGlobalConfig(ctx context.Context, config *Config) error 
 		return fmt.Errorf("starvation_time must be >= 0")
 	}
 
-	// 更新配置
+	// Update config
 	m.config.Enabled = config.Enabled
 	m.config.Interval = config.Interval
 	m.config.MaxGPUCount = config.MaxGPUCount
@@ -733,7 +740,7 @@ func (m *Manager) UpdateGlobalConfig(ctx context.Context, config *Config) error 
 	return nil
 }
 
-// GetGlobalConfig 获取全局配置
+// GetGlobalConfig gets global config
 func (m *Manager) GetGlobalConfig() *Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -788,8 +795,8 @@ func (m *Manager) persistConfig(ctx context.Context) {
 	}
 }
 
-// checkAndScaleDownIdleWorkers 检查长时间空闲的 worker，触发主动缩容
-// 即使 Endpoint 整体未达到空闲阈值，如果有个别 worker 空闲时间过长，也可以缩容
+// checkAndScaleDownIdleWorkers checks for long-idle workers and triggers proactive scale-down
+// Even if the Endpoint overall hasn't reached idle threshold, individual workers with excessive idle time can be scaled down
 func (m *Manager) checkAndScaleDownIdleWorkers(ctx context.Context, endpoints []*EndpointConfig) error {
 	// Check each endpoint for long-idle workers
 	for _, ep := range endpoints {

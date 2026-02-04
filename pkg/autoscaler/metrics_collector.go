@@ -13,7 +13,7 @@ import (
 	"waverless/pkg/store/mysql"
 )
 
-// MetricsCollector 指标收集器
+// MetricsCollector is the metrics collector
 type MetricsCollector struct {
 	deploymentProvider interfaces.DeploymentProvider
 	endpointService    *endpointsvc.Service
@@ -32,7 +32,7 @@ type replicaSnapshot struct {
 	UpdatedAt  time.Time
 }
 
-// NewMetricsCollector 创建指标收集器
+// NewMetricsCollector creates a metrics collector
 func NewMetricsCollector(
 	deploymentProvider interfaces.DeploymentProvider,
 	endpointService *endpointsvc.Service,
@@ -48,7 +48,7 @@ func NewMetricsCollector(
 	}
 }
 
-// UpdateReplicaSnapshot 更新副本快照，供控制循环快速读取最新状态
+// UpdateReplicaSnapshot updates replica snapshot for control loop to quickly read latest state
 func (c *MetricsCollector) UpdateReplicaSnapshot(event interfaces.ReplicaEvent) bool {
 	c.replicaMu.Lock()
 	defer c.replicaMu.Unlock()
@@ -82,9 +82,9 @@ func (c *MetricsCollector) getReplicaSnapshot(name string) (replicaSnapshot, boo
 	return snap, ok
 }
 
-// CollectEndpointMetrics 收集所有 Endpoint 的指标
+// CollectEndpointMetrics collects metrics for all endpoints
 func (c *MetricsCollector) CollectEndpointMetrics(ctx context.Context) ([]*EndpointConfig, error) {
-	// 获取所有 endpoint 元数据
+	// Get all endpoint metadata
 	endpoints, err := c.endpointService.ListEndpoints(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list endpoints: %w", err)
@@ -103,7 +103,7 @@ func (c *MetricsCollector) CollectEndpointMetrics(ctx context.Context) ([]*Endpo
 	return configs, nil
 }
 
-// collectSingleEndpoint 收集单个 Endpoint 的指标
+// collectSingleEndpoint collects metrics for a single endpoint
 func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interfaces.EndpointMetadata) (*EndpointConfig, error) {
 	config := &EndpointConfig{
 		Name:        ep.Name,
@@ -114,7 +114,7 @@ func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interf
 		Replicas:    ep.Replicas,
 		Priority:    ep.Priority,
 
-		// 扩缩容配置（使用默认值或配置值）
+		// Autoscaling config (use default or configured values)
 		ScaleUpThreshold:  getOrDefault(ep.ScaleUpThreshold, 1),
 		ScaleDownIdleTime: getOrDefault(ep.ScaleDownIdleTime, 300),
 		ScaleUpCooldown:   getOrDefault(ep.ScaleUpCooldown, 30),
@@ -127,7 +127,7 @@ func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interf
 		LastTaskTime:      ep.LastTaskTime,
 		FirstPendingTime:  ep.FirstPendingTime,
 
-		// 直接使用数据库中的副本状态，不再调用 K8s API
+		// Use replica status from database directly, no longer calling K8s API
 		ActualReplicas:    ep.ReadyReplicas,
 		AvailableReplicas: ep.AvailableReplicas,
 	}
@@ -137,14 +137,14 @@ func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interf
 		logger.WarnCtx(ctx, "endpoint %s: maxReplicas is 0, autoscaling will NOT work! Please configure maxReplicas > 0", ep.Name)
 	}
 
-	// 优先使用 informer 快照（如果有更新的数据）
+	// Prefer informer snapshot (if more recent data available)
 	if snapshot, ok := c.getReplicaSnapshot(ep.Name); ok {
 		config.ActualReplicas = snapshot.Ready
 		config.AvailableReplicas = snapshot.Available
 		config.Conditions = snapshot.Conditions
 	}
 
-	// 获取排队任务数（从MySQL统计）
+	// Get pending task count (from MySQL)
 	pendingCount, err := c.taskRepo.CountByEndpointAndStatus(ctx, ep.Name, constants.TaskStatusPending.String())
 	if err != nil {
 		logger.WarnCtx(ctx, "failed to get pending task count for %s: %v", ep.Name, err)
@@ -152,7 +152,7 @@ func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interf
 	}
 	config.PendingTasks = pendingCount
 
-	// 获取正在执行的任务数
+	// Get running task count
 	runningCount, err := c.getRunningTaskCount(ctx, ep.Name)
 	if err != nil {
 		logger.WarnCtx(ctx, "failed to get running task count for %s: %v", ep.Name, err)
@@ -160,42 +160,17 @@ func (c *MetricsCollector) collectSingleEndpoint(ctx context.Context, ep *interf
 	}
 	config.RunningTasks = runningCount
 
-	// 更新 FirstPendingTime
+	// Update FirstPendingTime
 	if pendingCount > 0 && config.FirstPendingTime.IsZero() {
 		config.FirstPendingTime = time.Now()
 	} else if pendingCount == 0 {
-		config.FirstPendingTime = time.Time{} // 重置
+		config.FirstPendingTime = time.Time{} // Reset
 	}
 
 	return config, nil
 }
 
-// getReplicaStats 获取 K8s 中实际运行的副本数和正在排空的副本数
-func (c *MetricsCollector) getReplicaStats(ctx context.Context, endpoint string) (ready int, available int, draining int, conditions []interfaces.ReplicaCondition, err error) {
-	app, err := c.deploymentProvider.GetApp(ctx, endpoint)
-	if err != nil {
-		return 0, 0, 0, nil, err
-	}
-
-	ready = int(app.ReadyReplicas)
-	available = int(app.AvailableReplicas)
-
-	// Count draining workers - workers whose pods are marked for deletion
-	drainingCount := 0
-	workers, err := c.workerLister.ListWorkers(ctx, endpoint)
-	if err == nil {
-		for _, worker := range workers {
-			if string(worker.Status) == constants.WorkerStatusDraining.String() {
-				drainingCount++
-			}
-		}
-	}
-	draining = drainingCount
-
-	return ready, available, draining, conditions, nil
-}
-
-// getRunningTaskCount 获取正在执行的任务数
+// getRunningTaskCount gets the count of running tasks
 func (c *MetricsCollector) getRunningTaskCount(ctx context.Context, endpoint string) (int64, error) {
 	// OPTIMIZATION: Use in-progress index instead of scanning all tasks
 	// Get all in-progress task IDs from Redis SET
@@ -225,7 +200,7 @@ func (c *MetricsCollector) getRunningTaskCount(ctx context.Context, endpoint str
 	return count, nil
 }
 
-// getOrDefault 获取值或默认值
+// getOrDefault gets value or default value
 func getOrDefault(value, defaultValue int) int {
 	if value == 0 {
 		return defaultValue
@@ -233,7 +208,7 @@ func getOrDefault(value, defaultValue int) int {
 	return value
 }
 
-// getBoolOrDefault 获取布尔值或默认值
+// getBoolOrDefault gets boolean value or default value
 func getBoolOrDefault(value *bool, defaultValue bool) bool {
 	if value == nil {
 		return defaultValue

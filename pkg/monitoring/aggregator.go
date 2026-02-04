@@ -12,8 +12,8 @@ import (
 
 // Aggregator handles monitoring data aggregation
 type Aggregator struct {
-	repo             *mysql.MonitoringRepository
-	lastMinuteAggAt  time.Time // 上次分钟统计的结束时间点
+	repo            *mysql.MonitoringRepository
+	lastMinuteAggAt time.Time // End time of last minute aggregation
 }
 
 // NewAggregator creates a new aggregator
@@ -24,19 +24,19 @@ func NewAggregator(repo *mysql.MonitoringRepository) *Aggregator {
 // AggregateMinuteStats aggregates statistics for pending minutes (catches up if behind)
 func (a *Aggregator) AggregateMinuteStats(ctx context.Context) error {
 	now := time.Now().Truncate(time.Minute)
-	
-	// 初始化：从 2 分钟前开始（确保数据完整）
+
+	// Initialize: start from 2 minutes ago (ensure data completeness)
 	if a.lastMinuteAggAt.IsZero() {
 		a.lastMinuteAggAt = now.Add(-2 * time.Minute)
 	}
-	
-	// 追赶所有缺失的分钟
+
+	// Catch up all missing minutes
 	for a.lastMinuteAggAt.Before(now.Add(-time.Minute)) {
 		from := a.lastMinuteAggAt
 		to := from.Add(time.Minute)
-		
+
 		endpoints := a.getAllEndpoints(ctx, from, to)
-		
+
 		var wg sync.WaitGroup
 		for endpoint := range endpoints {
 			wg.Add(1)
@@ -51,7 +51,7 @@ func (a *Aggregator) AggregateMinuteStats(ctx context.Context) error {
 			}(endpoint)
 		}
 		wg.Wait()
-		
+
 		a.lastMinuteAggAt = to
 		logger.DebugCtx(ctx, "aggregated minute stats for %s", from.Format("15:04"))
 	}

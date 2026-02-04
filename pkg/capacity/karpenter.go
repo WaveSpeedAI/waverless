@@ -108,11 +108,11 @@ func (p *KarpenterProvider) checkRecovery(ctx context.Context, callback func(int
 	p.failureCacheMu.RLock()
 	defer p.failureCacheMu.RUnlock()
 
-	recoveryThreshold := 10 * time.Minute // 10分钟没有新失败，尝试恢复
+	recoveryThreshold := 10 * time.Minute // 10 minutes without new failures, try recovery
 
 	for specName, lastFailure := range p.failureCache {
 		if time.Since(lastFailure) > recoveryThreshold {
-			// 检查是否有成功运行的 NodeClaim
+			// Check if there's a successfully running NodeClaim
 			hasRunning, _ := p.hasRunningNodeClaim(ctx, specName)
 			if hasRunning {
 				callback(interfaces.CapacityEvent{
@@ -154,7 +154,7 @@ func (p *KarpenterProvider) hasRunningNodeClaim(ctx context.Context, specName st
 	return false, nil
 }
 
-// isNodeClaimReady 检查 NodeClaim 是否就绪
+// isNodeClaimReady checks if NodeClaim is ready
 func (p *KarpenterProvider) isNodeClaimReady(obj *unstructured.Unstructured) bool {
 	conditions, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	if !found {
@@ -206,7 +206,7 @@ func (p *KarpenterProvider) handleNodeClaim(ctx context.Context, obj *unstructur
 				event.Status = interfaces.CapacitySoldOut
 				event.Reason = "nodeclaim:" + reason
 
-				// 记录失败时间
+				// Record failure time
 				p.failureCacheMu.Lock()
 				p.failureCache[specName] = time.Now()
 				p.failureCacheMu.Unlock()
@@ -216,7 +216,7 @@ func (p *KarpenterProvider) handleNodeClaim(ctx context.Context, obj *unstructur
 				event.Status = interfaces.CapacityAvailable
 				event.Reason = "nodeclaim"
 
-				// 清除失败缓存
+				// Clear failure cache
 				p.failureCacheMu.Lock()
 				delete(p.failureCache, specName)
 				p.failureCacheMu.Unlock()
@@ -230,7 +230,7 @@ func (p *KarpenterProvider) handleNodeClaim(ctx context.Context, obj *unstructur
 	}
 }
 
-// isCapacityError 判断是否是容量相关错误
+// isCapacityError checks if the error is capacity-related
 func (p *KarpenterProvider) isCapacityError(reason, message string) bool {
 	capacityErrors := []string{
 		"InsufficientInstanceCapacity",
@@ -267,7 +267,7 @@ func (p *KarpenterProvider) Check(ctx context.Context, specName string) (*interf
 		return nil, err
 	}
 
-	// 检查是否有失败的 NodeClaim
+	// Check if there are failed NodeClaims
 	var hasFailure bool
 	var failureReason string
 	var hasSuccess bool
@@ -304,7 +304,7 @@ func (p *KarpenterProvider) Check(ctx context.Context, specName string) (*interf
 		UpdatedAt: time.Now(),
 	}
 
-	// 有成功的就是 available，否则看是否有失败
+	// If there's a success, it's available; otherwise check for failures
 	if hasSuccess {
 		event.Status = interfaces.CapacityAvailable
 		event.Reason = "nodeclaim"
@@ -312,7 +312,7 @@ func (p *KarpenterProvider) Check(ctx context.Context, specName string) (*interf
 		event.Status = interfaces.CapacitySoldOut
 		event.Reason = "nodeclaim:" + failureReason
 	} else {
-		event.Status = interfaces.CapacityAvailable // 没有 NodeClaim 也算 available
+		event.Status = interfaces.CapacityAvailable // No NodeClaim also counts as available
 		event.Reason = "default"
 	}
 
@@ -320,10 +320,10 @@ func (p *KarpenterProvider) Check(ctx context.Context, specName string) (*interf
 }
 
 func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.CapacityEvent, error) {
-	// 收集所有 spec 的状态
+	// Collect status for all specs
 	specStatus := make(map[string]*interfaces.CapacityEvent)
 
-	// 初始化所有 spec 为 available
+	// Initialize all specs as available
 	for _, specName := range p.nodePoolToSpec {
 		specStatus[specName] = &interfaces.CapacityEvent{
 			SpecName:  specName,
@@ -332,13 +332,13 @@ func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.Capacity
 		}
 	}
 
-	// 列出所有 NodeClaim
+	// List all NodeClaims
 	list, err := p.client.Resource(nodeClaimGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	// 分析每个 NodeClaim
+	// Analyze each NodeClaim
 	for _, item := range list.Items {
 		labels := item.GetLabels()
 		nodePool := labels["karpenter.sh/nodepool"]
@@ -364,11 +364,11 @@ func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.Capacity
 				message, _ := cond["message"].(string)
 
 				if status == "True" {
-					// 有成功的，标记为 available
+					// Has success, mark as available
 					specStatus[specName].Status = interfaces.CapacityAvailable
 					specStatus[specName].Reason = "nodeclaim"
 				} else if status == "False" && p.isCapacityError(reason, message) {
-					// 只有当前还没有成功的才标记为 sold_out
+					// Only mark as sold_out if not already successful
 					if specStatus[specName].Status != interfaces.CapacityAvailable {
 						specStatus[specName].Status = interfaces.CapacitySoldOut
 						specStatus[specName].Reason = "nodeclaim:" + reason
@@ -378,7 +378,7 @@ func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.Capacity
 		}
 	}
 
-	// 转换为数组
+	// Convert to array
 	var events []interfaces.CapacityEvent
 	for _, event := range specStatus {
 		events = append(events, *event)

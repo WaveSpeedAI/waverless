@@ -92,52 +92,9 @@ func (v *ImageValidator) WithRedisClient(client *redis.Client) *ImageValidator {
 	return v
 }
 
-// imageReferenceRegex validates image reference format.
-// Supports:
-// - Simple names: nginx, ubuntu
-// - With tag: nginx:latest, nginx:1.0
-// - With digest: nginx@sha256:abc123...
-// - With namespace: library/nginx, user/repo
-// - With registry: gcr.io/project/image, registry.example.com/image:tag
-// - AWS ECR: 123456789.dkr.ecr.us-east-1.amazonaws.com/repo:tag
-//
-// The regex is based on the Docker image reference specification:
-// [registry/][namespace/]repository[:tag][@digest]
-var (
-	// Registry pattern: optional registry with port
-	// Examples: gcr.io, registry.example.com:5000, 123456789.dkr.ecr.us-east-1.amazonaws.com
-	registryPattern = `(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?::\d+)?|localhost(?::\d+)?|\d+\.\d+\.\d+\.\d+(?::\d+)?)`
-
-	// Repository component pattern: alphanumeric with optional separators (-, _, .)
-	// Must start and end with alphanumeric
-	componentPattern = `[a-z0-9]+(?:(?:[._]|__|[-]*)[a-z0-9]+)*`
-
-	// Tag pattern: alphanumeric with optional separators (-, _, .)
-	// Max 128 characters
-	tagPattern = `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`
-
-	// Digest pattern: algorithm:hex
-	digestPattern = `[a-zA-Z][a-zA-Z0-9]*:[a-fA-F0-9]{32,}`
-
-	// Full image reference regex
-	// Format: [registry/][namespace/]repository[:tag][@digest]
-	imageReferenceRegex = regexp.MustCompile(
-		`^` +
-			// Optional registry (with trailing /)
-			`(?:` + registryPattern + `/)?` +
-			// Repository path (one or more components separated by /)
-			`(?:` + componentPattern + `/)*` + componentPattern +
-			// Optional tag
-			`(?::` + tagPattern + `)?` +
-			// Optional digest
-			`(?:@` + digestPattern + `)?` +
-			`$`,
-	)
-
-	// Simple validation for common cases - more permissive
-	// This catches obvious errors while allowing valid references
-	simpleImageRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$`)
-)
+// simpleImageRegex validates image reference format with a permissive pattern.
+// This catches obvious errors while allowing valid references.
+var simpleImageRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$`)
 
 // ValidateImageFormat validates the format of an image reference.
 // It supports common registry formats including:

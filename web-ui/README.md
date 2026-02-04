@@ -1,57 +1,33 @@
 # Waverless Web UI
 
-Web-based user interface for managing Waverless serverless deployments.
+Web-based management interface for Waverless serverless GPU platform.
 
-## Environment Variables
+## Features
 
-Create a `.env` file in the `web-ui` directory to configure the application:
+- **Dashboard**: System overview with endpoint statistics and resource utilization
+- **Endpoints**: Create, update, scale, and manage worker deployments
+- **Endpoint Detail**: Monitor workers, view logs, configure autoscaling
+- **Tasks**: View task history, status, and execution details
+- **Specs**: Browse available hardware specifications (GPU types)
+- **Serverless**: Quick deployment wizard for new endpoints
 
-```bash
-# API Backend URL
-# The base URL for the Waverless API backend
-# In production, set this to your actual backend URL
-VITE_API_BACKEND_URL=http://localhost:8080
-```
+## Tech Stack
 
-### Example Configurations
+| Technology | Purpose |
+|------------|---------|
+| React 18 | UI framework |
+| TypeScript | Type safety |
+| Ant Design | UI components |
+| React Query | Data fetching & caching |
+| React Router | Client-side routing |
+| Zustand | State management |
+| Monaco Editor | Code/YAML editing |
+| ECharts | Data visualization |
+| Vite | Build tool |
 
-**Development (local):**
-```bash
-VITE_API_BACKEND_URL=http://localhost:8080
-```
+## Quick Start
 
-**Production:**
-```bash
-VITE_API_BACKEND_URL=https://api.yourcompany.com
-```
-
-**Docker deployment:**
-```bash
-VITE_API_BACKEND_URL=http://waverless-backend:8080
-```
-
-## Quick Start Feature
-
-The Overview tab includes a collapsible Quick Start panel that allows you to test endpoints directly from the UI:
-
-- **Collapsible**: Click to expand/collapse the panel to save screen space
-- **Three test modes**:
-  - `/run` (async) - Submit tasks asynchronously and get task ID immediately
-  - `/runsync` (sync) - Submit tasks and wait for completion
-  - `/status` (query) - Query task status by task ID
-- **Left panel**: Submit test tasks with JSON input or query task status
-- **Right panel**: View code examples in cURL, Python, and JavaScript
-- Automatically uses the configured `VITE_API_BACKEND_URL` for API examples
-- **Smart workflow**: When using `/run`, the returned task ID is auto-filled in the status query form
-
-This makes it easy to:
-1. Verify your endpoint is working
-2. Test with sample inputs
-3. Query task status for async operations
-4. Copy code examples for integration
-5. Keep the interface clean when not testing
-
-## Development
+### Development
 
 ```bash
 # Install dependencies
@@ -59,11 +35,143 @@ pnpm install
 
 # Start development server
 pnpm dev
-
-# Build for production
-pnpm run build
 ```
 
-## Production Build
+Access http://localhost:5173
 
-The built static files will be in the `dist/` directory and can be served by any static file server or reverse proxy.
+### Production Build
+
+```bash
+# Build for production
+pnpm build
+
+# Preview production build
+pnpm preview
+```
+
+Built files output to `dist/` directory.
+
+## Configuration
+
+### Environment Variables
+
+Create `.env` file in `web-ui` directory:
+
+```bash
+# API Backend URL
+VITE_API_BACKEND_URL=http://localhost:8080
+
+# Admin credentials (for build-time injection)
+VITE_ADMIN_USERNAME=admin
+VITE_ADMIN_PASSWORD=admin
+```
+
+### Environment Examples
+
+| Environment | VITE_API_BACKEND_URL |
+|-------------|---------------------|
+| Local Dev | `http://localhost:8080` |
+| K8s Dev | `http://waverless-svc:8080` |
+| Production | `https://api.yourcompany.com` |
+
+## Pages
+
+### Dashboard
+- System-wide statistics overview
+- Endpoint count, worker count, task metrics
+- Quick Start panel for API testing
+
+### Endpoints
+- List all endpoints with status
+- Create new endpoint deployments
+- Scale replicas up/down
+- Delete endpoints
+
+### Endpoint Detail
+- Worker list with status indicators
+- Real-time logs viewer
+- Autoscaling configuration
+- Task history for this endpoint
+
+### Tasks
+- Global task list with filtering
+- Task status (PENDING, IN_PROGRESS, COMPLETED, FAILED)
+- Execution time and queue time metrics
+- Input/output data viewer
+
+### Specs
+- Available hardware specifications
+- GPU types, CPU, memory configurations
+- Platform-specific settings
+
+### Serverless
+- Guided deployment wizard
+- Image selection and configuration
+- Resource spec selection
+- Environment variable setup
+
+## Quick Start Panel
+
+The Dashboard includes a collapsible Quick Start panel for API testing:
+
+- **Test Modes**:
+  - `/run` - Async task submission
+  - `/runsync` - Sync task submission
+  - `/status` - Query task status
+
+- **Features**:
+  - JSON input editor
+  - Auto-fill task ID from async responses
+  - Code examples (cURL, Python, JavaScript)
+  - Copy-to-clipboard support
+
+## Docker Deployment
+
+```bash
+docker build -t waverless-web:latest \
+  --build-arg VITE_API_BACKEND_URL=http://api:8080 \
+  --build-arg VITE_ADMIN_USERNAME=admin \
+  --build-arg VITE_ADMIN_PASSWORD=admin \
+  .
+```
+
+The Docker image uses nginx to serve static files with runtime environment variable substitution.
+
+## Project Structure
+
+```
+web-ui/
+├── src/
+│   ├── api/           # API client
+│   ├── components/    # Reusable components
+│   │   └── Layout/    # Sidebar, Header
+│   ├── pages/         # Page components
+│   │   ├── Dashboard/
+│   │   ├── Endpoints/
+│   │   ├── EndpointDetail/
+│   │   ├── Tasks/
+│   │   ├── Specs/
+│   │   ├── Serverless/
+│   │   └── Login/
+│   ├── styles/        # CSS styles
+│   ├── types/         # TypeScript types
+│   ├── utils/         # Utility functions
+│   ├── App.tsx        # Main app component
+│   └── main.tsx       # Entry point
+├── public/            # Static assets
+├── index.html         # HTML template
+├── vite.config.ts     # Vite configuration
+└── tsconfig.json      # TypeScript configuration
+```
+
+## Authentication
+
+Simple username/password authentication with localStorage persistence.
+
+Default credentials: `admin` / `admin`
+
+Configure via environment variables or build args.
+
+---
+
+**Related Documentation**: [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md)

@@ -7,9 +7,9 @@ import (
 
 	"waverless/internal/model"
 	endpointsvc "waverless/internal/service/endpoint"
-	"waverless/pkg/deploy/k8s"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider/k8s"
 	"waverless/pkg/store/mysql"
 )
 
