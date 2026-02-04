@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"waverless/pkg/config"
 	"waverless/pkg/interfaces"
@@ -21,20 +22,60 @@ func NewProviderFactory(cfg *config.Config) *ProviderFactory {
 	return &ProviderFactory{cfg: cfg}
 }
 
-// CreateDeploymentProvider creates deployment provider
+// DeploymentFactory creates deployment provider
 type DeploymentFactory func(cfg *config.Config) (interfaces.DeploymentProvider, error)
 
-var deploymentFactories = map[string]DeploymentFactory{}
+var (
+	deploymentFactories   = map[string]DeploymentFactory{}
+	deploymentFactoriesMu sync.RWMutex
+)
 
 // RegisterDeploymentProvider registers new deployment provider factory
+// This function is thread-safe and can be called from multiple goroutines
+//
+// Example:
+//   provider.RegisterDeploymentProvider("custom", func(cfg *config.Config) (interfaces.DeploymentProvider, error) {
+//       return NewCustomProvider(cfg)
+//   })
 func RegisterDeploymentProvider(name string, factory DeploymentFactory) {
 	if name == "" || factory == nil {
 		return
 	}
-	deploymentFactories[strings.ToLower(name)] = factory
+
+	deploymentFactoriesMu.Lock()
+	defer deploymentFactoriesMu.Unlock()
+
+	normalizedName := strings.ToLower(name)
+	if _, exists := deploymentFactories[normalizedName]; exists {
+		panic(fmt.Sprintf("deployment provider %s is already registered", name))
+	}
+
+	deploymentFactories[normalizedName] = factory
+}
+
+// ListDeploymentProviders returns all registered provider names
+func ListDeploymentProviders() []string {
+	deploymentFactoriesMu.RLock()
+	defer deploymentFactoriesMu.RUnlock()
+
+	names := make([]string, 0, len(deploymentFactories))
+	for name := range deploymentFactories {
+		names = append(names, name)
+	}
+	return names
+}
+
+// IsDeploymentProviderRegistered checks if a provider is registered
+func IsDeploymentProviderRegistered(name string) bool {
+	deploymentFactoriesMu.RLock()
+	defer deploymentFactoriesMu.RUnlock()
+
+	_, exists := deploymentFactories[strings.ToLower(name)]
+	return exists
 }
 
 func init() {
+	// Register built-in providers
 	RegisterDeploymentProvider("k8s", k8s.NewK8sDeploymentProvider)
 	RegisterDeploymentProvider("kubernetes", k8s.NewK8sDeploymentProvider)
 	RegisterDeploymentProvider("docker", docker.NewDockerDeploymentProvider)
@@ -42,13 +83,16 @@ func init() {
 }
 
 func (f *ProviderFactory) CreateDeploymentProvider(providerType string) (interfaces.DeploymentProvider, error) {
+	deploymentFactoriesMu.RLock()
+	defer deploymentFactoriesMu.RUnlock()
+
 	if len(deploymentFactories) == 0 {
 		return nil, fmt.Errorf("no deployment providers registered")
 	}
 
 	factory, ok := deploymentFactories[strings.ToLower(providerType)]
 	if !ok {
-		return nil, fmt.Errorf("unsupported deployment provider type: %s", providerType)
+		return nil, fmt.Errorf("unsupported deployment provider type: %s (available: %v)", providerType, ListDeploymentProviders())
 	}
 
 	return factory(f.cfg)

@@ -8,6 +8,7 @@ import (
 	"waverless/internal/service"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider"
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
 	"waverless/pkg/store/mysql"
@@ -17,14 +18,13 @@ import (
 // It manages watcher registration for all Providers
 type Manager struct {
 	ctx                context.Context
-	providers          map[string]any // stores registered provider lifecycles
+	providers          map[string]ProviderLifecycle // stores registered provider lifecycles
 	mu                 sync.RWMutex
 	callbackHandler    *CallbackHandler
 	workerRepo         *mysql.WorkerRepository
 	endpointRepo       *mysql.EndpointRepository
 	workerService      *service.WorkerService
 	workerEventService *service.WorkerEventService
-	k8sProvider        *k8s.K8sDeploymentProvider // K8s provider reference for deployment operations
 }
 
 // NewManager creates a new lifecycle manager
@@ -39,7 +39,7 @@ func NewManager(
 
 	return &Manager{
 		ctx:                ctx,
-		providers:          make(map[string]any),
+		providers:          make(map[string]ProviderLifecycle),
 		callbackHandler:    callbackHandler,
 		workerRepo:         workerRepo,
 		endpointRepo:       endpointRepo,
@@ -63,9 +63,6 @@ func (m *Manager) RegisterK8sProvider(provider *k8s.K8sDeploymentProvider) error
 		return nil
 	}
 
-	// Save K8s provider reference for deployment operations
-	m.k8sProvider = provider
-
 	// Get lifecycle
 	lifecycle := provider.GetLifecycle()
 	if lifecycle == nil {
@@ -73,7 +70,7 @@ func (m *Manager) RegisterK8sProvider(provider *k8s.K8sDeploymentProvider) error
 	}
 
 	// Create K8s callbacks
-	callbacks := m.createK8sCallbacks()
+	callbacks := m.createK8sCallbacks(provider)
 
 	// Register watchers
 	if err := lifecycle.RegisterWatchers(callbacks); err != nil {
@@ -122,37 +119,37 @@ func (m *Manager) RegisterNovitaProvider(provider *novita.NovitaDeploymentProvid
 }
 
 // createK8sCallbacks creates K8s callback functions
-func (m *Manager) createK8sCallbacks() *k8s.K8sLifecycleCallbacks {
+func (m *Manager) createK8sCallbacks(k8sProvider *k8s.K8sDeploymentProvider) *k8s.K8sLifecycleCallbacks {
 	return &k8s.K8sLifecycleCallbacks{
 		OnWorkerStatusChange: func(workerID, endpoint string, podInfo *interfaces.PodInfo) {
-			m.callbackHandler.HandleWorkerStatusChange(&WorkerStatusEvent{
+			m.callbackHandler.HandleWorkerStatusChange(&provider.WorkerStatusEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 				PodInfo:  podInfo,
 			})
 		},
 		OnWorkerDelete: func(workerID, endpoint string) {
-			m.callbackHandler.HandleWorkerDelete(&WorkerDeleteEvent{
+			m.callbackHandler.HandleWorkerDelete(&provider.WorkerDeleteEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 			})
 		},
 		OnWorkerDraining: func(workerID, endpoint, reason string) {
-			m.callbackHandler.HandleWorkerDraining(&WorkerDrainingEvent{
+			m.callbackHandler.HandleWorkerDraining(&provider.WorkerDrainingEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 				Reason:   reason,
 			})
 		},
 		OnWorkerFailure: func(workerID, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
-			m.callbackHandler.HandleWorkerFailure(&WorkerFailureEvent{
+			m.callbackHandler.HandleWorkerFailure(&provider.WorkerFailureEvent{
 				WorkerID:    workerID,
 				Endpoint:    endpoint,
 				FailureInfo: failureInfo,
 			})
 		},
 		OnEndpointStatusChange: func(endpoint, status string, desiredReplicas, readyReplicas, availableReplicas int) {
-			m.callbackHandler.HandleEndpointStatusChange(&EndpointStatusEvent{
+			m.callbackHandler.HandleEndpointStatusChange(&provider.EndpointStatusEvent{
 				Endpoint:          endpoint,
 				Status:            status,
 				DesiredReplicas:   desiredReplicas,
@@ -163,7 +160,7 @@ func (m *Manager) createK8sCallbacks() *k8s.K8sLifecycleCallbacks {
 		OnDeploymentChange: func(endpoint string) {
 			// When Deployment spec changes (e.g., image update), optimize rolling update
 			// by setting PodDeletionCost for idle workers to -1000, so K8s deletes them first
-			m.handleDeploymentChangeWithOptimization(endpoint)
+			m.handleDeploymentChangeWithOptimization(k8sProvider, endpoint)
 		},
 	}
 }
@@ -172,34 +169,34 @@ func (m *Manager) createK8sCallbacks() *k8s.K8sLifecycleCallbacks {
 func (m *Manager) createNovitaCallbacks() *novita.NovitaLifecycleCallbacks {
 	return &novita.NovitaLifecycleCallbacks{
 		OnWorkerStatusChange: func(workerID, endpoint string, podInfo *interfaces.PodInfo) {
-			m.callbackHandler.HandleWorkerStatusChange(&WorkerStatusEvent{
+			m.callbackHandler.HandleWorkerStatusChange(&provider.WorkerStatusEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 				PodInfo:  podInfo,
 			})
 		},
 		OnWorkerDelete: func(workerID, endpoint string) {
-			m.callbackHandler.HandleWorkerDelete(&WorkerDeleteEvent{
+			m.callbackHandler.HandleWorkerDelete(&provider.WorkerDeleteEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 			})
 		},
 		OnWorkerDraining: func(workerID, endpoint, reason string) {
-			m.callbackHandler.HandleWorkerDraining(&WorkerDrainingEvent{
+			m.callbackHandler.HandleWorkerDraining(&provider.WorkerDrainingEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
 				Reason:   reason,
 			})
 		},
 		OnWorkerFailure: func(workerID, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
-			m.callbackHandler.HandleWorkerFailure(&WorkerFailureEvent{
+			m.callbackHandler.HandleWorkerFailure(&provider.WorkerFailureEvent{
 				WorkerID:    workerID,
 				Endpoint:    endpoint,
 				FailureInfo: failureInfo,
 			})
 		},
 		OnEndpointStatusChange: func(endpoint, status string, desiredReplicas, readyReplicas, availableReplicas int) {
-			m.callbackHandler.HandleEndpointStatusChange(&EndpointStatusEvent{
+			m.callbackHandler.HandleEndpointStatusChange(&provider.EndpointStatusEvent{
 				Endpoint:          endpoint,
 				Status:            status,
 				DesiredReplicas:   desiredReplicas,
@@ -220,16 +217,9 @@ func (m *Manager) UnregisterProvider(name string) error {
 		return fmt.Errorf("provider %s not found", name)
 	}
 
-	// Call StopWatchers based on type
-	switch p := provider.(type) {
-	case *k8s.K8sProviderLifecycle:
-		if err := p.StopWatchers(); err != nil {
-			logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
-		}
-	case *novita.NovitaProviderLifecycle:
-		if err := p.StopWatchers(); err != nil {
-			logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
-		}
+	// Call StopWatchers using the interface method
+	if err := provider.StopWatchers(); err != nil {
+		logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
 	}
 
 	delete(m.providers, name)
@@ -244,19 +234,12 @@ func (m *Manager) StopAll() {
 	defer m.mu.Unlock()
 
 	for name, provider := range m.providers {
-		switch p := provider.(type) {
-		case *k8s.K8sProviderLifecycle:
-			if err := p.StopWatchers(); err != nil {
-				logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
-			}
-		case *novita.NovitaProviderLifecycle:
-			if err := p.StopWatchers(); err != nil {
-				logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
-			}
+		if err := provider.StopWatchers(); err != nil {
+			logger.WarnCtx(m.ctx, "Failed to stop watchers for provider %s: %v", name, err)
 		}
 	}
 
-	m.providers = make(map[string]any)
+	m.providers = make(map[string]ProviderLifecycle)
 	logger.InfoCtx(m.ctx, "All providers stopped")
 }
 
@@ -283,11 +266,11 @@ func (m *Manager) IsProviderRegistered(name string) bool {
 // handleDeploymentChangeWithOptimization handles Deployment changes and optimizes rolling update
 // When Deployment spec changes (e.g., image update), find idle workers and set their PodDeletionCost to -1000
 // This way K8s will prioritize deleting these idle pods during rolling update, reducing impact on busy workers
-func (m *Manager) handleDeploymentChangeWithOptimization(endpoint string) {
+func (m *Manager) handleDeploymentChangeWithOptimization(k8sProvider *k8s.K8sDeploymentProvider, endpoint string) {
 	logger.InfoCtx(m.ctx, "Deployment spec changed for endpoint %s, optimizing rolling update...", endpoint)
 
 	// Check if K8s provider is available
-	if m.k8sProvider == nil {
+	if k8sProvider == nil {
 		logger.WarnCtx(m.ctx, "K8s provider not available, skipping rolling update optimization")
 		return
 	}
@@ -312,7 +295,7 @@ func (m *Manager) handleDeploymentChangeWithOptimization(endpoint string) {
 	for _, w := range workers {
 		if w.CurrentJobs == 0 {
 			// Idle worker: set PodDeletionCost to -1000, K8s will delete it first
-			if err := m.k8sProvider.SetPodDeletionCost(m.ctx, w.PodName, -1000); err != nil {
+			if err := k8sProvider.SetPodDeletionCost(m.ctx, w.PodName, -1000); err != nil {
 				logger.WarnCtx(m.ctx, "Failed to set pod deletion cost for idle worker %s: %v", w.PodName, err)
 			} else {
 				idleCount++
@@ -320,7 +303,7 @@ func (m *Manager) handleDeploymentChangeWithOptimization(endpoint string) {
 			}
 		} else {
 			// Busy worker: set PodDeletionCost to 1000, K8s will delete it last
-			if err := m.k8sProvider.SetPodDeletionCost(m.ctx, w.PodName, 1000); err != nil {
+			if err := k8sProvider.SetPodDeletionCost(m.ctx, w.PodName, 1000); err != nil {
 				logger.WarnCtx(m.ctx, "Failed to set pod deletion cost for busy worker %s: %v", w.PodName, err)
 			} else {
 				busyCount++

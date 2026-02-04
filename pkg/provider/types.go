@@ -2,8 +2,15 @@
 package provider
 
 import (
+	"fmt"
+
 	"waverless/pkg/interfaces"
 )
+
+// ErrInvalidConfig creates an error for invalid provider configuration
+func ErrInvalidConfig(providerName string, config interface{}) error {
+	return fmt.Errorf("invalid config for provider %s: expected provider-specific config, got %T", providerName, config)
+}
 
 // ProviderLifecycle defines the provider lifecycle interface
 // Each provider implements this interface to register its watchers

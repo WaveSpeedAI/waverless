@@ -2,21 +2,28 @@ package lifecycle
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"waverless/internal/model"
 	"waverless/internal/service"
 	"waverless/pkg/logger"
+	"waverless/pkg/provider"
 	"waverless/pkg/store/mysql"
 )
 
 // CallbackHandler handles all callback processing logic
+// Thread-safe: All methods can be called concurrently from multiple watchers
 type CallbackHandler struct {
 	ctx                context.Context
 	workerRepo         *mysql.WorkerRepository
 	endpointRepo       *mysql.EndpointRepository
 	workerService      *service.WorkerService
 	workerEventService *service.WorkerEventService
+
+	// Mutex to protect check-then-act operations for worker creation
+	// Key: endpoint:podName
+	workerCreationMu sync.Map
 }
 
 // NewCallbackHandler creates a new callback handler
@@ -37,7 +44,8 @@ func NewCallbackHandler(
 }
 
 // HandleWorkerStatusChange handles Worker status changes
-func (h *CallbackHandler) HandleWorkerStatusChange(event *WorkerStatusEvent) {
+// Thread-safe: Can be called concurrently for different or same workers
+func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusEvent) {
 	if event == nil || event.PodInfo == nil {
 		return
 	}
@@ -59,23 +67,36 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *WorkerStatusEvent) {
 		}
 	}
 
-	// Check if this is a new Worker
+	// Use per-worker lock to prevent race condition in check-then-act pattern
+	workerKey := endpoint + ":" + podName
+	mu, _ := h.workerCreationMu.LoadOrStore(workerKey, &sync.Mutex{})
+	workerMu := mu.(*sync.Mutex)
+
+	workerMu.Lock()
+	defer workerMu.Unlock()
+
+	// Check if this is a new Worker (within lock to prevent race)
 	existingWorker, _ := h.workerRepo.GetByPodName(h.ctx, endpoint, podName)
 	isNewWorker := existingWorker == nil
 
 	// Create or update Worker
 	if err := h.workerRepo.UpsertFromPod(h.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt); err != nil {
 		logger.WarnCtx(h.ctx, "Failed to upsert worker from pod %s: %v", podName, err)
+		return
 	}
 
-	// Record WORKER_STARTED event
+	// Record WORKER_STARTED event only for new workers
+	// This is now safe from race conditions due to the lock
 	if isNewWorker && h.workerEventService != nil {
 		h.workerEventService.RecordWorkerStarted(h.ctx, podName, endpoint)
+		logger.InfoCtx(h.ctx, "Recorded WORKER_STARTED event for new worker: %s", podName)
 	}
 }
 
 // HandleWorkerDelete handles Worker deletion
-func (h *CallbackHandler) HandleWorkerDelete(event *WorkerDeleteEvent) {
+// Thread-safe: Can be called concurrently for different workers
+// Idempotent: Safe to call multiple times for the same worker
+func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) {
 	if event == nil {
 		return
 	}
@@ -95,7 +116,9 @@ func (h *CallbackHandler) HandleWorkerDelete(event *WorkerDeleteEvent) {
 }
 
 // HandleWorkerDraining handles Worker Draining
-func (h *CallbackHandler) HandleWorkerDraining(event *WorkerDrainingEvent) {
+// Thread-safe: Can be called concurrently for different workers
+// Idempotent: Safe to call multiple times for the same worker
+func (h *CallbackHandler) HandleWorkerDraining(event *provider.WorkerDrainingEvent) {
 	if event == nil {
 		return
 	}
@@ -113,6 +136,19 @@ func (h *CallbackHandler) HandleWorkerDraining(event *WorkerDrainingEvent) {
 		return
 	}
 
+	// Check if already in terminal state (OFFLINE)
+	// Don't override terminal states with DRAINING
+	if worker.Status == model.WorkerStatusOffline {
+		logger.InfoCtx(h.ctx, "Worker %s already in terminal state %s, skipping draining", worker.ID, worker.Status)
+		return
+	}
+
+	// Check if already DRAINING (idempotent)
+	if worker.Status == model.WorkerStatusDraining {
+		logger.DebugCtx(h.ctx, "Worker %s already in DRAINING state, skipping", worker.ID)
+		return
+	}
+
 	// Mark Worker as DRAINING
 	err = h.workerService.UpdateWorkerStatus(h.ctx, worker.ID, model.WorkerStatusDraining)
 	if err != nil {
@@ -125,7 +161,9 @@ func (h *CallbackHandler) HandleWorkerDraining(event *WorkerDrainingEvent) {
 }
 
 // HandleWorkerFailure handles Worker failure
-func (h *CallbackHandler) HandleWorkerFailure(event *WorkerFailureEvent) {
+// Thread-safe: Can be called concurrently for different workers
+// Idempotent: Safe to call multiple times (updates failure info)
+func (h *CallbackHandler) HandleWorkerFailure(event *provider.WorkerFailureEvent) {
 	if event == nil || event.FailureInfo == nil {
 		return
 	}
@@ -146,7 +184,9 @@ func (h *CallbackHandler) HandleWorkerFailure(event *WorkerFailureEvent) {
 }
 
 // HandleEndpointStatusChange handles Endpoint status changes
-func (h *CallbackHandler) HandleEndpointStatusChange(event *EndpointStatusEvent) {
+// Thread-safe: Can be called concurrently for different endpoints
+// Idempotent: Safe to call multiple times (updates runtime state)
+func (h *CallbackHandler) HandleEndpointStatusChange(event *provider.EndpointStatusEvent) {
 	if event == nil {
 		return
 	}
