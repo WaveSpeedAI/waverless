@@ -4,14 +4,40 @@ import (
 	"context"
 )
 
-// DeploymentProvider deployment provider interface
-// Supports multiple deployment methods like K8s, third-party services, etc.
-type DeploymentProvider interface {
+// ========================================
+// Modular Provider Interfaces (ISP - Interface Segregation Principle)
+// ========================================
+//
+// The interfaces below follow the Interface Segregation Principle, allowing providers
+// to implement only the capabilities they support.
+//
+// Usage Examples:
+//
+// 1. Simple HTTP API Provider (minimal implementation):
+//    type SimpleProvider struct {}
+//    func (p *SimpleProvider) Deploy(...) { }
+//    func (p *SimpleProvider) GetApp(...) { }
+//    // ... implement only CoreDeploymentProvider
+//
+// 2. K8s Provider (full implementation):
+//    type K8sProvider struct {}
+//    // Implements FullDeploymentProvider (all interfaces)
+//
+// 3. Novita Provider (core + specs):
+//    type NovitaProvider struct {}
+//    // Implements CoreDeploymentProvider + SpecProvider
+//
+// 4. Type assertions for optional capabilities:
+//    if podProvider, ok := provider.(PodProvider); ok {
+//        pods, _ := podProvider.GetPods(ctx, endpoint)
+//    }
+//
+// ========================================
+
+// CoreDeploymentProvider defines the core deployment operations
+// All providers must implement this interface
+type CoreDeploymentProvider interface {
 	// Deploy deploys application
-	// endpoint: application name/endpoint name
-	// spec: specification configuration (e.g., GPU type, resource configuration, etc.)
-	// image: Docker image
-	// replicas: replica count
 	Deploy(ctx context.Context, req *DeployRequest) (*DeployResponse, error)
 
 	// GetApp retrieves application details
@@ -23,49 +49,93 @@ type DeploymentProvider interface {
 	// DeleteApp deletes application
 	DeleteApp(ctx context.Context, endpoint string) error
 
-	// GetAppLogs retrieves application logs
-	// podName is optional - if provided, gets logs from specific pod; otherwise gets from first pod
-	GetAppLogs(ctx context.Context, endpoint string, lines int, podName ...string) (string, error)
-
 	// ScaleApp scales application
 	ScaleApp(ctx context.Context, endpoint string, replicas int) error
 
 	// GetAppStatus retrieves application status
 	GetAppStatus(ctx context.Context, endpoint string) (*AppStatus, error)
 
+	// UpdateDeployment updates deployment (e.g., image, replica count, etc.)
+	UpdateDeployment(ctx context.Context, req *UpdateDeploymentRequest) (*DeployResponse, error)
+}
+
+// SpecProvider defines specification management operations
+// Optional: Providers that support spec management should implement this
+type SpecProvider interface {
 	// ListSpecs lists available specifications
 	ListSpecs(ctx context.Context) ([]*SpecInfo, error)
 
 	// GetSpec retrieves specification details
 	GetSpec(ctx context.Context, specName string) (*SpecInfo, error)
+}
 
-	// PreviewDeploymentYAML previews deployment configuration
-	PreviewDeploymentYAML(ctx context.Context, req *DeployRequest) (string, error)
+// LogProvider defines log retrieval operations
+// Optional: Providers that support log retrieval should implement this
+type LogProvider interface {
+	// GetAppLogs retrieves application logs
+	GetAppLogs(ctx context.Context, endpoint string, lines int, podName ...string) (string, error)
+}
 
-	// UpdateDeployment updates deployment (e.g., image, replica count, etc.)
-	UpdateDeployment(ctx context.Context, req *UpdateDeploymentRequest) (*DeployResponse, error)
-
-	// WatchReplicas watches replica count changes
-	WatchReplicas(ctx context.Context, callback ReplicaCallback) error
-
-	// GetPods retrieves all Pod information for specified endpoint (including Pending, Running, Terminating)
+// PodProvider defines Pod-specific operations (K8s-specific)
+// Optional: Only K8s-based providers need to implement this
+type PodProvider interface {
+	// GetPods retrieves all Pod information for specified endpoint
 	GetPods(ctx context.Context, endpoint string) ([]*PodInfo, error)
 
-	// DescribePod retrieves detailed Pod information (similar to kubectl describe)
+	// DescribePod retrieves detailed Pod information
 	DescribePod(ctx context.Context, endpoint string, podName string) (*PodDetail, error)
 
-	// GetPodYAML retrieves Pod YAML (similar to kubectl get pod -o yaml)
+	// GetPodYAML retrieves Pod YAML
 	GetPodYAML(ctx context.Context, endpoint string, podName string) (string, error)
-
-	// ListPVCs lists all PersistentVolumeClaims in the namespace
-	ListPVCs(ctx context.Context) ([]*PVCInfo, error)
-
-	// GetDefaultEnv retrieves default environment variables from wavespeed-config ConfigMap
-	GetDefaultEnv(ctx context.Context) (map[string]string, error)
 
 	// IsPodTerminating checks if a worker/pod is terminating
 	IsPodTerminating(ctx context.Context, podName string) (bool, error)
 }
+
+// StorageProvider defines storage operations (K8s-specific)
+// Optional: Only providers with persistent storage support need this
+type StorageProvider interface {
+	// ListPVCs lists all PersistentVolumeClaims
+	ListPVCs(ctx context.Context) ([]*PVCInfo, error)
+}
+
+// ConfigProvider defines configuration operations
+// Optional: Providers that support configuration management should implement this
+type ConfigProvider interface {
+	// GetDefaultEnv retrieves default environment variables
+	GetDefaultEnv(ctx context.Context) (map[string]string, error)
+}
+
+// PreviewProvider defines deployment preview operations
+// Optional: Providers that support preview should implement this
+type PreviewProvider interface {
+	// PreviewDeploymentYAML previews deployment configuration
+	PreviewDeploymentYAML(ctx context.Context, req *DeployRequest) (string, error)
+}
+
+// WatchProvider defines watch operations
+// Optional: Providers that support watching should implement this
+type WatchProvider interface {
+	// WatchReplicas watches replica count changes
+	WatchReplicas(ctx context.Context, callback ReplicaCallback) error
+}
+
+// FullDeploymentProvider combines all provider interfaces
+// This is the complete interface for providers that implement all capabilities (like K8s)
+type FullDeploymentProvider interface {
+	CoreDeploymentProvider
+	SpecProvider
+	LogProvider
+	PodProvider
+	StorageProvider
+	ConfigProvider
+	PreviewProvider
+	WatchProvider
+}
+
+// DeploymentProvider is an alias for FullDeploymentProvider
+// This maintains backward compatibility with existing code
+type DeploymentProvider = FullDeploymentProvider
 
 // ReplicaEvent represents Deployment replica change event
 type ReplicaEvent struct {

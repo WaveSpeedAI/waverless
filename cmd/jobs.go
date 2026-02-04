@@ -9,11 +9,10 @@ import (
 
 	"waverless/internal/jobs"
 	"waverless/internal/service"
-	"waverless/pkg/autoscaler"
-	"waverless/pkg/deploy/k8s"
 	"waverless/pkg/logger"
-	"waverless/pkg/monitoring"
+	"waverless/pkg/provider/k8s"
 	mysqlstore "waverless/pkg/store/mysql"
+	redisstore "waverless/pkg/store/redis"
 )
 
 func (app *Application) initJobs() error {
@@ -36,9 +35,12 @@ func (app *Application) initJobs() error {
 		redisClient = app.redisClient.GetClient()
 	}
 
-	workerCleanupLock := autoscaler.NewRedisDistributedLock(redisClient, "cleanup:worker-lock")
-	taskTimeoutLock := autoscaler.NewRedisDistributedLock(redisClient, "cleanup:task-timeout-lock")
-	orphanedTaskLock := autoscaler.NewRedisDistributedLock(redisClient, "cleanup:orphaned-task-lock")
+	// Create lock store for distributed locks
+	lockStore := redisstore.NewLockStore(redisClient)
+
+	workerCleanupLock := lockStore.NewLock("cleanup:worker-lock", nil)
+	taskTimeoutLock := lockStore.NewLock("cleanup:task-timeout-lock", nil)
+	orphanedTaskLock := lockStore.NewLock("cleanup:orphaned-task-lock", nil)
 
 	// Register background tasks with locks
 	manager.Register(newWorkerCleanupJob(workerInterval, app.workerService, workerCleanupLock))
@@ -47,22 +49,20 @@ func (app *Application) initJobs() error {
 
 	// Register task statistics refresh task
 	if app.statisticsService != nil {
-		statsRefreshLock := autoscaler.NewRedisDistributedLock(redisClient, "stats:refresh-lock")
+		statsRefreshLock := lockStore.NewLock("stats:refresh-lock", nil)
 		manager.Register(newStatisticsRefreshJob(10*time.Minute, app.statisticsService, statsRefreshLock))
 	}
 
 	// Register monitoring tasks
 	if app.monitoringService != nil {
-		minuteAggLock := autoscaler.NewRedisDistributedLock(redisClient, "monitoring:minute-agg-lock")
-		hourlyAggLock := autoscaler.NewRedisDistributedLock(redisClient, "monitoring:hourly-agg-lock")
-		dailyAggLock := autoscaler.NewRedisDistributedLock(redisClient, "monitoring:daily-agg-lock")
-		snapshotLock := autoscaler.NewRedisDistributedLock(redisClient, "monitoring:snapshot-lock")
-		dataCleanupLock := autoscaler.NewRedisDistributedLock(redisClient, "cleanup:data-retention-lock")
+		minuteAggLock := lockStore.NewLock("monitoring:minute-agg-lock", nil)
+		hourlyAggLock := lockStore.NewLock("monitoring:hourly-agg-lock", nil)
+		dailyAggLock := lockStore.NewLock("monitoring:daily-agg-lock", nil)
+		dataCleanupLock := lockStore.NewLock("cleanup:data-retention-lock", nil)
 
 		manager.Register(newMinuteAggregationJob(time.Minute, app.monitoringService, minuteAggLock))
 		manager.Register(newHourlyAggregationJob(time.Hour, app.monitoringService, hourlyAggLock))
 		manager.Register(newDailyAggregationJob(24*time.Hour, app.monitoringService, dailyAggLock))
-		manager.Register(newSnapshotCollectionJob(time.Minute, app.monitoringCollector, snapshotLock))
 		manager.Register(newDataRetentionCleanupJob(24*time.Hour, app.mysqlRepo, dataCleanupLock))
 	}
 
@@ -74,10 +74,10 @@ func (app *Application) initJobs() error {
 type workerCleanupJob struct {
 	interval        time.Duration
 	workerService   *service.WorkerService
-	distributedLock autoscaler.DistributedLock
+	distributedLock redisstore.DistributedLock
 }
 
-func newWorkerCleanupJob(interval time.Duration, svc *service.WorkerService, lock autoscaler.DistributedLock) jobs.Job {
+func newWorkerCleanupJob(interval time.Duration, svc *service.WorkerService, lock redisstore.DistributedLock) jobs.Job {
 	return &workerCleanupJob{
 		interval:        interval,
 		workerService:   svc,
@@ -116,10 +116,10 @@ func (j *workerCleanupJob) Run(ctx context.Context) error {
 type taskTimeoutCleanupJob struct {
 	interval        time.Duration
 	taskService     *service.TaskService
-	distributedLock autoscaler.DistributedLock
+	distributedLock redisstore.DistributedLock
 }
 
-func newTaskTimeoutCleanupJob(interval time.Duration, svc *service.TaskService, lock autoscaler.DistributedLock) jobs.Job {
+func newTaskTimeoutCleanupJob(interval time.Duration, svc *service.TaskService, lock redisstore.DistributedLock) jobs.Job {
 	return &taskTimeoutCleanupJob{
 		interval:        interval,
 		taskService:     svc,
@@ -158,10 +158,10 @@ func (j *taskTimeoutCleanupJob) Run(ctx context.Context) error {
 type orphanedTaskCleanupJob struct {
 	interval        time.Duration
 	taskService     *service.TaskService
-	distributedLock autoscaler.DistributedLock
+	distributedLock redisstore.DistributedLock
 }
 
-func newOrphanedTaskCleanupJob(interval time.Duration, svc *service.TaskService, lock autoscaler.DistributedLock) jobs.Job {
+func newOrphanedTaskCleanupJob(interval time.Duration, svc *service.TaskService, lock redisstore.DistributedLock) jobs.Job {
 	return &orphanedTaskCleanupJob{
 		interval:        interval,
 		taskService:     svc,
@@ -290,7 +290,7 @@ func (app *Application) hasRunningTasks(ctx context.Context, workerID string) (b
 		return false, fmt.Errorf("failed to get tasks for worker %s: %w", workerID, err)
 	}
 
-	// GetTasksByWorker 只返回 IN_PROGRESS 状态的任务
+	// GetTasksByWorker only returns tasks with IN_PROGRESS status
 	return len(tasks) > 0, nil
 }
 
@@ -298,10 +298,10 @@ func (app *Application) hasRunningTasks(ctx context.Context, workerID string) (b
 type statisticsRefreshJob struct {
 	interval          time.Duration
 	statisticsService *service.StatisticsService
-	distributedLock   autoscaler.DistributedLock
+	distributedLock   redisstore.DistributedLock
 }
 
-func newStatisticsRefreshJob(interval time.Duration, svc *service.StatisticsService, lock autoscaler.DistributedLock) jobs.Job {
+func newStatisticsRefreshJob(interval time.Duration, svc *service.StatisticsService, lock redisstore.DistributedLock) jobs.Job {
 	return &statisticsRefreshJob{
 		interval:          interval,
 		statisticsService: svc,
@@ -336,15 +336,14 @@ func (j *statisticsRefreshJob) Run(ctx context.Context) error {
 	return j.statisticsService.RefreshAllStatistics(ctx)
 }
 
-
 // minuteAggregationJob aggregates monitoring data every minute
 type minuteAggregationJob struct {
 	interval          time.Duration
 	monitoringService *service.MonitoringService
-	distributedLock   autoscaler.DistributedLock
+	distributedLock   redisstore.DistributedLock
 }
 
-func newMinuteAggregationJob(interval time.Duration, svc *service.MonitoringService, lock autoscaler.DistributedLock) jobs.Job {
+func newMinuteAggregationJob(interval time.Duration, svc *service.MonitoringService, lock redisstore.DistributedLock) jobs.Job {
 	return &minuteAggregationJob{
 		interval:          interval,
 		monitoringService: svc,
@@ -374,10 +373,10 @@ func (j *minuteAggregationJob) Run(ctx context.Context) error {
 type hourlyAggregationJob struct {
 	interval          time.Duration
 	monitoringService *service.MonitoringService
-	distributedLock   autoscaler.DistributedLock
+	distributedLock   redisstore.DistributedLock
 }
 
-func newHourlyAggregationJob(interval time.Duration, svc *service.MonitoringService, lock autoscaler.DistributedLock) jobs.Job {
+func newHourlyAggregationJob(interval time.Duration, svc *service.MonitoringService, lock redisstore.DistributedLock) jobs.Job {
 	return &hourlyAggregationJob{
 		interval:          interval,
 		monitoringService: svc,
@@ -409,10 +408,10 @@ func (j *hourlyAggregationJob) Run(ctx context.Context) error {
 type dailyAggregationJob struct {
 	interval          time.Duration
 	monitoringService *service.MonitoringService
-	distributedLock   autoscaler.DistributedLock
+	distributedLock   redisstore.DistributedLock
 }
 
-func newDailyAggregationJob(interval time.Duration, svc *service.MonitoringService, lock autoscaler.DistributedLock) jobs.Job {
+func newDailyAggregationJob(interval time.Duration, svc *service.MonitoringService, lock redisstore.DistributedLock) jobs.Job {
 	return &dailyAggregationJob{
 		interval:          interval,
 		monitoringService: svc,
@@ -440,44 +439,14 @@ func (j *dailyAggregationJob) Run(ctx context.Context) error {
 	return j.monitoringService.AggregateDailyStats(ctx)
 }
 
-// snapshotCollectionJob collects worker resource snapshots
-type snapshotCollectionJob struct {
-	interval        time.Duration
-	collector       *monitoring.Collector
-	distributedLock autoscaler.DistributedLock
-}
-
-func newSnapshotCollectionJob(interval time.Duration, collector *monitoring.Collector, lock autoscaler.DistributedLock) jobs.Job {
-	return &snapshotCollectionJob{interval: interval, collector: collector, distributedLock: lock}
-}
-
-func (j *snapshotCollectionJob) Name() string { return "monitoring-snapshot-collection" }
-
-func (j *snapshotCollectionJob) Interval() time.Duration { return j.interval }
-
-func (j *snapshotCollectionJob) Run(ctx context.Context) error {
-	if j.collector == nil {
-		return nil
-	}
-	if j.distributedLock != nil {
-		acquired, err := j.distributedLock.TryLock(ctx)
-		if err != nil || !acquired {
-			return nil
-		}
-		defer j.distributedLock.Unlock(ctx)
-	}
-	return j.collector.CollectSnapshots(ctx)
-}
-
-
 // dataRetentionCleanupJob cleans up old data (tasks, task_events, worker_events) daily
 type dataRetentionCleanupJob struct {
 	interval        time.Duration
 	repo            *mysqlstore.Repository
-	distributedLock autoscaler.DistributedLock
+	distributedLock redisstore.DistributedLock
 }
 
-func newDataRetentionCleanupJob(interval time.Duration, repo *mysqlstore.Repository, lock autoscaler.DistributedLock) jobs.Job {
+func newDataRetentionCleanupJob(interval time.Duration, repo *mysqlstore.Repository, lock redisstore.DistributedLock) jobs.Job {
 	return &dataRetentionCleanupJob{interval: interval, repo: repo, distributedLock: lock}
 }
 
@@ -499,7 +468,7 @@ func (j *dataRetentionCleanupJob) Run(ctx context.Context) error {
 
 	retentionDays := 10
 	before := time.Now().AddDate(0, 0, -retentionDays)
-	
+
 	// Clean old completed/failed tasks
 	taskRows, _ := j.repo.Task.CleanupOldTasks(ctx, before)
 	if taskRows > 0 {

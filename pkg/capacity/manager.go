@@ -128,7 +128,7 @@ func (m *Manager) startPolling(ctx context.Context) error {
 	}
 }
 
-// startPodCountUpdater 定时更新 Pod 数量统计
+// startPodCountUpdater starts scheduled task to update Pod count statistics
 func (m *Manager) startPodCountUpdater(ctx context.Context) {
 	if m.podCountProvider == nil {
 		return
@@ -137,7 +137,7 @@ func (m *Manager) startPodCountUpdater(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// 首次立即执行
+	// Execute immediately on first run
 	m.updatePodCounts(ctx)
 
 	for {
@@ -168,7 +168,7 @@ func (m *Manager) updatePodCounts(ctx context.Context) {
 	}
 }
 
-// startSpotChecker 定时检查 Spot 容量和价格
+// startSpotChecker starts scheduled task to check Spot capacity and pricing
 func (m *Manager) startSpotChecker(ctx context.Context) {
 	if m.spotChecker == nil {
 		return
@@ -177,7 +177,7 @@ func (m *Manager) startSpotChecker(ctx context.Context) {
 	ticker := time.NewTicker(m.spotCheckInterval)
 	defer ticker.Stop()
 
-	// 首次立即执行
+	// Execute immediately on first run
 	m.checkSpots(ctx)
 
 	for {
@@ -202,7 +202,7 @@ func (m *Manager) checkSpots(ctx context.Context) {
 	}
 
 	for _, spot := range spots {
-		// 更新 Spot 信息到数据库（始终更新，用于展示）
+		// Update Spot info to database (always update for display)
 		if err := m.repo.UpdateSpotInfo(ctx, spot.SpecName, spot.Score, spot.Price, spot.InstanceType); err != nil {
 			logger.WarnCtx(ctx, "Failed to update spot info for %s: %v", spot.SpecName, err)
 		}
@@ -210,7 +210,7 @@ func (m *Manager) checkSpots(ctx context.Context) {
 		logger.InfoCtx(ctx, "Spot check: spec=%s, instance=%s, score=%d, price=$%.4f/hr",
 			spot.SpecName, spot.InstanceType, spot.Score, spot.Price)
 
-		// Spot Score 决定状态，但不主动标记 sold_out
+		// Spot Score determines status, but does not actively mark as sold_out
 		var newStatus interfaces.CapacityStatus
 		if spot.Score >= 7 {
 			newStatus = interfaces.CapacityAvailable
@@ -235,7 +235,7 @@ func (m *Manager) handleEvent(event interfaces.CapacityEvent) {
 	m.cache[event.SpecName] = cacheEntry{Status: event.Status, Reason: event.Reason}
 	m.cacheMu.Unlock()
 
-	// 状态或原因变化时更新 DB
+	// Update DB when status or reason changes
 	if old.Status != event.Status || old.Reason != event.Reason {
 		if err := m.repo.UpdateStatus(ctx, event.SpecName, model.CapacityStatus(event.Status), event.Reason); err != nil {
 			logger.WarnCtx(ctx, "Failed to update capacity status: %v", err)
@@ -257,7 +257,7 @@ func (m *Manager) GetStatus(specName string) interfaces.CapacityStatus {
 	return interfaces.CapacityAvailable
 }
 
-// ReportSuccess 上报开机成功
+// ReportSuccess reports successful startup
 func (m *Manager) ReportSuccess(ctx context.Context, specName string) {
 	m.handleEvent(interfaces.CapacityEvent{
 		SpecName:  specName,
@@ -267,7 +267,7 @@ func (m *Manager) ReportSuccess(ctx context.Context, specName string) {
 	})
 }
 
-// ReportFailure 上报开机失败
+// ReportFailure reports startup failure
 func (m *Manager) ReportFailure(ctx context.Context, specName, reason string) {
 	m.handleEvent(interfaces.CapacityEvent{
 		SpecName:  specName,

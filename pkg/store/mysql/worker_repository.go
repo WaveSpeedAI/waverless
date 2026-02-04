@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"waverless/pkg/constants"
@@ -162,6 +163,13 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 			}
 		}
 		if err := r.ds.DB(ctx).Create(worker).Error; err != nil {
+			// Ignore duplicate key error (another replica already inserted)
+			// This can happen in multi-replica deployment when both replicas
+			// detect a new worker at the same time
+			if strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "duplicate key") {
+				logger.InfoCtx(ctx, "UpsertFromPod: worker %s already exists (created by another replica), ignoring", podName)
+				return nil
+			}
 			logger.ErrorCtx(ctx, "UpsertFromPod: create failed for pod_name=%s: %v", podName, err)
 			return err
 		}

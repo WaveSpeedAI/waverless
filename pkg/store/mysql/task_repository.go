@@ -274,39 +274,6 @@ func (r *TaskRepository) GetPendingTasksByEndpoint(ctx context.Context, endpoint
 	return tasks, nil
 }
 
-// SelectPendingTasksForUpdate queries and locks PENDING tasks (without updating status)
-// Uses SELECT FOR UPDATE row lock to ensure same task won't be pulled by multiple workers simultaneously
-// This function only handles query and locking, not status update, to avoid rollback needs
-// OPTIMIZATION: Only returns task IDs to avoid fetching large input field
-// DEPRECATED: Use SelectAndAssignTasks instead to avoid race condition
-func (r *TaskRepository) SelectPendingTasksForUpdate(ctx context.Context, endpoint string, limit int) ([]string, error) {
-	var taskIDs []string
-
-	// Use transaction + SELECT FOR UPDATE to query and lock tasks
-	err := r.ds.ExecTx(ctx, func(txCtx context.Context) error {
-		// Query PENDING tasks and add row lock (SELECT FOR UPDATE)
-		// Only select task_id to avoid fetching large input field
-		err := r.ds.DB(txCtx).Model(&Task{}).
-			Select("task_id").
-			Where("endpoint = ? AND status = ?", endpoint, "PENDING").
-			Order("id ASC"). // Earlier creation time has priority (FIFO)
-			Limit(limit).
-			Clauses(clause.Locking{Strength: "UPDATE"}). // SELECT FOR UPDATE
-			Pluck("task_id", &taskIDs).Error
-		if err != nil {
-			return fmt.Errorf("failed to select pending tasks: %w", err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return taskIDs, nil
-}
-
 // SelectAndAssignTasks atomically selects PENDING tasks and assigns them to worker in one transaction
 // This prevents race condition where multiple workers grab the same task
 func (r *TaskRepository) SelectAndAssignTasks(ctx context.Context, endpoint string, limit int, workerID string) ([]*Task, error) {

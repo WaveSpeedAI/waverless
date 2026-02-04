@@ -8,7 +8,6 @@ package status
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 	"waverless/pkg/interfaces"
@@ -711,34 +710,4 @@ func genKnownK8sImagePullReason() gopter.Gen {
 		"ImageInspectError",
 		"RegistryUnavailable",
 	)
-}
-
-// ============================================================================
-// Helper functions
-// ============================================================================
-
-// containsChineseChar checks if a string contains Chinese characters
-func containsChineseChar(s string) bool {
-	for _, r := range s {
-		if r >= 0x4e00 && r <= 0x9fff {
-			return true
-		}
-	}
-	return false
-}
-
-// sensitivePatternRegexes contains compiled regex patterns for sensitive info detection
-var sensitivePatternRegexes = []*regexp.Regexp{
-	regexp.MustCompile(`\b(?:node|ip|gke|aks|eks)[-_][a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\bnode/[a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\bnamespace[/:]?\s*[a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\bns[/:]?\s*[a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),
-	regexp.MustCompile(`\b172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}\b`),
-	regexp.MustCompile(`\b192\.168\.\d{1,3}\.\d{1,3}\b`),
-	regexp.MustCompile(`\bpod/[a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\bsecret[/:]?\s*[a-zA-Z0-9][-a-zA-Z0-9_.]*\b`),
-	regexp.MustCompile(`\b\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\b`),
-	regexp.MustCompile(`\bgcr\.io/[a-zA-Z0-9][-a-zA-Z0-9_]*/`),
-	regexp.MustCompile(`\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b`),
 }

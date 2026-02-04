@@ -11,12 +11,12 @@ import (
 	"waverless/internal/jobs"
 	"waverless/internal/service"
 	endpointsvc "waverless/internal/service/endpoint"
+	"waverless/internal/service/lifecycle"
 	"waverless/pkg/autoscaler"
 	"waverless/pkg/capacity"
 	"waverless/pkg/config"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
-	"waverless/pkg/monitoring"
 	mysqlstore "waverless/pkg/store/mysql"
 	redisstore "waverless/pkg/store/redis"
 
@@ -34,13 +34,13 @@ type Application struct {
 	deploymentProvider interfaces.DeploymentProvider
 
 	// Service layer
-	endpointService      *endpointsvc.Service
-	taskService          *service.TaskService
-	workerService        *service.WorkerService
-	workerEventService   *service.WorkerEventService
-	statisticsService    *service.StatisticsService
-	specService          *service.SpecService
-	monitoringService    *service.MonitoringService
+	endpointService    *endpointsvc.Service
+	taskService        *service.TaskService
+	workerService      *service.WorkerService
+	workerEventService *service.WorkerEventService
+	statisticsService  *service.StatisticsService
+	specService        *service.SpecService
+	monitoringService  *service.MonitoringService
 
 	// Handler layer
 	taskHandler       *handler.TaskHandler
@@ -52,8 +52,8 @@ type Application struct {
 	imageHandler      *handler.ImageHandler
 	monitoringHandler *handler.MonitoringHandler
 
-	// Monitoring
-	monitoringCollector *monitoring.Collector
+	// Lifecycle Manager
+	lifecycleManager *lifecycle.Manager
 
 	// Capacity
 	capacityMgr *capacity.Manager
@@ -200,13 +200,19 @@ func (app *Application) Shutdown(timeout time.Duration) error {
 		// autoscalerMgr.Stop() triggered via context cancel
 	}
 
-	// 5. Execute all cleanup functions (in reverse registration order)
+	// 5. Stop Lifecycle Manager
+	if app.lifecycleManager != nil {
+		logger.InfoCtx(app.ctx, "Stopping lifecycle manager...")
+		app.lifecycleManager.StopAll()
+	}
+
+	// 6. Execute all cleanup functions (in reverse registration order)
 	logger.InfoCtx(app.ctx, "Executing cleanup functions...")
 	for i := len(app.cleanupFuncs) - 1; i >= 0; i-- {
 		app.cleanupFuncs[i]()
 	}
 
-	// 6. Sync logs
+	// 7. Sync logs
 	logger.Sync()
 
 	logger.InfoCtx(app.ctx, "Graceful shutdown completed")

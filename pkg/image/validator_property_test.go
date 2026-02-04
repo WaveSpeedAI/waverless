@@ -291,16 +291,6 @@ func genImageWithNamespace() gopter.Gen {
 	})
 }
 
-// genImageWithRegistry generates registry/image format
-func genImageWithRegistry() gopter.Gen {
-	return gopter.CombineGens(
-		genValidRegistry(),
-		genValidRepositoryComponent(),
-	).Map(func(vals []interface{}) string {
-		return vals[0].(string) + "/" + vals[1].(string)
-	})
-}
-
 // genImageWithWellKnownRegistry generates registry/image format with well-known registries only
 func genImageWithWellKnownRegistry() gopter.Gen {
 	return gopter.CombineGens(
@@ -412,18 +402,4 @@ func genInvalidDigest() gopter.Gen {
 		// Invalid algorithm
 		"123sha:abcdef0123456789abcdef0123456789ab",
 	)
-}
-
-// ============================================================================
-// Helper functions
-// ============================================================================
-
-// containsChineseChar checks if a string contains Chinese characters
-func containsChineseChar(s string) bool {
-	for _, r := range s {
-		if r >= 0x4e00 && r <= 0x9fff {
-			return true
-		}
-	}
-	return false
 }

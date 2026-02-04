@@ -19,16 +19,18 @@ import (
 type WorkerService struct {
 	workerRepo         *mysql.WorkerRepository
 	taskRepo           *mysql.TaskRepository
+	monitoringRepo     *mysql.MonitoringRepository
 	taskService        *TaskService
 	workerEventService *WorkerEventService
 	deployProvider     interfaces.DeploymentProvider
 }
 
 // NewWorkerService creates a new Worker service
-func NewWorkerService(workerRepo *mysql.WorkerRepository, taskRepo *mysql.TaskRepository, deployProvider interfaces.DeploymentProvider) *WorkerService {
+func NewWorkerService(workerRepo *mysql.WorkerRepository, taskRepo *mysql.TaskRepository, monitoringRepo *mysql.MonitoringRepository, deployProvider interfaces.DeploymentProvider) *WorkerService {
 	return &WorkerService{
 		workerRepo:     workerRepo,
 		taskRepo:       taskRepo,
+		monitoringRepo: monitoringRepo,
 		deployProvider: deployProvider,
 	}
 }
@@ -284,14 +286,32 @@ func (s *WorkerService) CleanupOfflineWorkers(ctx context.Context) error {
 		}
 	}
 
-	// Get all workers to check for task reclamation
+	// Get all workers to check for task reclamation and orphaned STARTING workers
 	workers, err := s.workerRepo.GetAll(ctx)
 	if err != nil {
 		return err
 	}
 
 	now := time.Now()
+	orphanedThreshold := 10 * time.Minute
+
 	for _, mw := range workers {
+		// Handle orphaned STARTING workers (Pod deleted before first heartbeat)
+		// Check if STARTING for too long and has WORKER_OFFLINE event
+		if mw.Status == constants.WorkerStatusStarting.String() && now.Sub(mw.CreatedAt) > orphanedThreshold {
+			var count int64
+			s.monitoringRepo.CountWorkerEvents(ctx, mw.WorkerID, "WORKER_OFFLINE", &count)
+			if count > 0 {
+				if err := s.workerRepo.MarkOfflineByPodName(ctx, mw.PodName); err != nil {
+					logger.WarnCtx(ctx, "failed to mark orphaned worker %s as OFFLINE: %v", mw.WorkerID, err)
+				} else {
+					logger.InfoCtx(ctx, "cleaned up orphaned STARTING worker: %s (OFFLINE event exists)", mw.WorkerID)
+				}
+				continue
+			}
+		}
+
+		// Reclaim tasks from workers with stale heartbeat
 		if now.Sub(mw.LastHeartbeat) > timeout {
 			worker := s.toDomainWorker(mw)
 			if err := s.reclaimWorkerTasks(ctx, worker); err != nil {

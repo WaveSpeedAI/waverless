@@ -1,13 +1,5 @@
-# Web UI Documentation
+# Web UI Design
 
-This documentation has been consolidated into the main docs directory.
+For complete documentation, see [README.md](./README.md).
 
-Please refer to: **[../docs/WEB_UI.md](../docs/WEB_UI.md)**
-
----
-
-## Quick Links
-
-- [Complete Web UI Documentation](../docs/WEB_UI.md)
-- [All Documentation](../docs/README.md)
-- [Quick Start Guide](../docs/QUICK_START.md)
+For deployment and usage guide, see [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md).

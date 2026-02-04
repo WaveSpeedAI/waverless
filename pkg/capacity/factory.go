@@ -11,7 +11,7 @@ const (
 	ProviderGeneric   ProviderType = "generic"
 )
 
-// NewProvider 根据类型创建 Provider
+// NewProvider creates a Provider based on type
 func NewProvider(providerType ProviderType, dynamicClient dynamic.Interface, nodePoolToSpec map[string]string) Provider {
 	switch providerType {
 	case ProviderKarpenter:
