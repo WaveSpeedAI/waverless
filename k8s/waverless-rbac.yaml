@@ -1,3 +1,9 @@
+# Base RBAC configuration for Waverless
+# This file contains namespace-scoped permissions for basic K8s operations.
+#
+# For AWS EKS with Karpenter support, also apply:
+#   kubectl apply -f waverless-aws-eks.yaml
+#
 # ServiceAccount for Waverless API and Web UI
 apiVersion: v1
 kind: ServiceAccount

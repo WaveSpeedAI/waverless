@@ -24,8 +24,9 @@ type PodCounts struct {
 
 // cacheEntry cache entry with status and reason
 type cacheEntry struct {
-	Status interfaces.CapacityStatus
-	Reason string
+	Status    interfaces.CapacityStatus
+	Reason    string
+	SpotScore int // cached spot score for priority comparison
 }
 
 type Manager struct {
@@ -210,20 +211,50 @@ func (m *Manager) checkSpots(ctx context.Context) {
 		logger.InfoCtx(ctx, "Spot check: spec=%s, instance=%s, score=%d, price=$%.4f/hr",
 			spot.SpecName, spot.InstanceType, spot.Score, spot.Price)
 
-		// Spot Score determines status, but does not actively mark as sold_out
+		// Spot Score determines status:
+		// - score <= 2: sold_out (very hard to get new instances)
+		// - score 3-6: limited (difficult but possible)
+		// - score >= 7: available (easy to get instances)
 		var newStatus interfaces.CapacityStatus
 		if spot.Score >= 7 {
 			newStatus = interfaces.CapacityAvailable
+		} else if spot.Score <= 2 {
+			newStatus = interfaces.CapacitySoldOut
 		} else {
 			newStatus = interfaces.CapacityLimited
 		}
 
-		m.handleEvent(interfaces.CapacityEvent{
-			SpecName:  spot.SpecName,
-			Status:    newStatus,
-			Reason:    "spot_score",
-			UpdatedAt: time.Now(),
-		})
+		m.handleSpotEvent(ctx, spot.SpecName, spot.Score, newStatus)
+	}
+}
+
+// handleSpotEvent handles spot score events with priority over nodeclaim events
+func (m *Manager) handleSpotEvent(ctx context.Context, specName string, spotScore int, newStatus interfaces.CapacityStatus) {
+	m.cacheMu.Lock()
+	old := m.cache[specName]
+	// Update spot score in cache
+	m.cache[specName] = cacheEntry{
+		Status:    newStatus,
+		Reason:    "spot_score",
+		SpotScore: spotScore,
+	}
+	m.cacheMu.Unlock()
+
+	// Update DB when status or reason changes
+	if old.Status != newStatus || old.Reason != "spot_score" {
+		if err := m.repo.UpdateStatus(ctx, specName, model.CapacityStatus(newStatus), "spot_score"); err != nil {
+			logger.WarnCtx(ctx, "Failed to update capacity status: %v", err)
+		}
+		logger.InfoCtx(ctx, "Capacity changed (spot): spec=%s, %s(%s) -> %s(spot_score, score=%d)",
+			specName, old.Status, old.Reason, newStatus, spotScore)
+		for _, cb := range m.callbacks {
+			cb(interfaces.CapacityEvent{
+				SpecName:  specName,
+				Status:    newStatus,
+				Reason:    "spot_score",
+				UpdatedAt: time.Now(),
+			})
+		}
 	}
 }
 
@@ -232,7 +263,19 @@ func (m *Manager) handleEvent(event interfaces.CapacityEvent) {
 
 	m.cacheMu.Lock()
 	old := m.cache[event.SpecName]
-	m.cache[event.SpecName] = cacheEntry{Status: event.Status, Reason: event.Reason}
+
+	// If current status is from spot_score with low score (<=2), nodeclaim events cannot override it
+	// This ensures spot availability takes priority over individual node success
+	if old.Reason == "spot_score" && old.SpotScore <= 2 && event.Reason == "nodeclaim" {
+		m.cacheMu.Unlock()
+		logger.InfoCtx(ctx, "Ignoring nodeclaim event for %s: spot_score=%d is too low, keeping status=%s",
+			event.SpecName, old.SpotScore, old.Status)
+		return
+	}
+
+	// For nodeclaim events, preserve the spot score
+	newEntry := cacheEntry{Status: event.Status, Reason: event.Reason, SpotScore: old.SpotScore}
+	m.cache[event.SpecName] = newEntry
 	m.cacheMu.Unlock()
 
 	// Update DB when status or reason changes
