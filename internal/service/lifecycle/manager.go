@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"waverless/internal/service"
+	endpointsvc "waverless/internal/service/endpoint"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
@@ -46,6 +47,20 @@ func NewManager(
 		workerService:      workerService,
 		workerEventService: workerEventService,
 	}
+}
+
+// SetEndpointService sets the endpoint service on the callback handler for status summary updates.
+// This must be called after NewManager and before any provider registration to ensure
+// status summary updates are triggered on worker status changes.
+// Validates: Requirement 4.3
+func (m *Manager) SetEndpointService(svc *endpointsvc.Service) {
+	m.callbackHandler.SetEndpointService(svc)
+}
+
+// SetSpotPriceLookup sets the spot price lookup on the callback handler.
+// This enables recording the Spot price at worker creation time.
+func (m *Manager) SetSpotPriceLookup(lookup SpotPriceLookup) {
+	m.callbackHandler.SetSpotPriceLookup(lookup)
 }
 
 // RegisterK8sProvider registers K8s Provider and starts its watchers

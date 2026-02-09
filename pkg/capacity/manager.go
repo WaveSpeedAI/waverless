@@ -7,6 +7,7 @@ import (
 
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/status"
 	"waverless/pkg/store/mysql"
 	"waverless/pkg/store/mysql/model"
 )
@@ -318,4 +319,91 @@ func (m *Manager) ReportFailure(ctx context.Context, specName, reason string) {
 		Reason:    "nodeclaim:" + reason,
 		UpdatedAt: time.Now(),
 	})
+}
+
+// GetSpotStatus returns the current Spot capacity status for the given instance type.
+// This method implements the status.CapacityManager interface.
+// If instanceType is empty, it returns nil (no specific instance type to look up).
+// If Spot information is not available for the instance type, it returns nil.
+// Validates: Requirement 2.4
+func (m *Manager) GetSpotStatus(instanceType string) *status.SpotStatus {
+	if m.repo == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// If instanceType is provided, try to find the spec with that instance type
+	// Otherwise, we cannot determine which spec to look up
+	if instanceType == "" {
+		// Try to get any available spot info from cache
+		// This is a fallback when instance type is not specified
+		m.cacheMu.RLock()
+		defer m.cacheMu.RUnlock()
+
+		// Look for any spec with spot info in the database
+		caps, err := m.repo.List(ctx)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to list spec capacities for spot status: %v", err)
+			return nil
+		}
+
+		// Return the first spec with valid spot info
+		for _, cap := range caps {
+			if cap.SpotScore != nil && cap.InstanceType != "" {
+				price := 0.0
+				if cap.SpotPrice != nil {
+					price, _ = cap.SpotPrice.Float64()
+				}
+				return status.NewSpotStatus(*cap.SpotScore, price, cap.InstanceType)
+			}
+		}
+		return nil
+	}
+
+	// Find spec by instance type
+	caps, err := m.repo.List(ctx)
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to list spec capacities for spot status: %v", err)
+		return nil
+	}
+
+	for _, cap := range caps {
+		if cap.InstanceType == instanceType && cap.SpotScore != nil {
+			price := 0.0
+			if cap.SpotPrice != nil {
+				price, _ = cap.SpotPrice.Float64()
+			}
+			return status.NewSpotStatus(*cap.SpotScore, price, cap.InstanceType)
+		}
+	}
+
+	return nil
+}
+
+// GetSpotStatusBySpec returns the current Spot capacity status for the given spec name.
+// This is a convenience method when you know the spec name instead of instance type.
+// Validates: Requirement 2.4
+func (m *Manager) GetSpotStatusBySpec(specName string) *status.SpotStatus {
+	if m.repo == nil || specName == "" {
+		return nil
+	}
+
+	ctx := context.Background()
+	cap, err := m.repo.Get(ctx, specName)
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to get spec capacity for %s: %v", specName, err)
+		return nil
+	}
+
+	if cap.SpotScore == nil {
+		return nil
+	}
+
+	price := 0.0
+	if cap.SpotPrice != nil {
+		price, _ = cap.SpotPrice.Float64()
+	}
+
+	return status.NewSpotStatus(*cap.SpotScore, price, cap.InstanceType)
 }

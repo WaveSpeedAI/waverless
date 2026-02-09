@@ -163,6 +163,9 @@ func (app *Application) initServices() error {
 	// Initialize monitoring service
 	app.monitoringService = service.NewMonitoringService(app.mysqlRepo.Monitoring)
 
+	// Initialize status event service (for status event tracking)
+	app.statusEventService = service.NewStatusEventService(app.mysqlRepo.StatusEvent, nil)
+
 	// Get K8s deployment provider for draining check
 	var k8sDeployProvider *k8s.K8sDeploymentProvider
 	if app.config.K8s.Enabled {
@@ -194,6 +197,12 @@ func (app *Application) initServices() error {
 	if err := app.setupLifecycleManager(k8sDeployProvider, novitaDeployProvider); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to setup lifecycle manager: %v (non-critical, continuing)", err)
 	}
+
+	// Wire status summary dependencies on endpoint service
+	// These are needed for ComputeStatusSummary and UpdateStatusSummary
+	// Validates: Requirement 4.3
+	app.endpointService.SetWorkerRepository(app.mysqlRepo.Worker)
+	app.endpointService.SetEndpointRepository(app.mysqlRepo.Endpoint)
 
 	// Start pod cleanup job for stuck terminating pods (when K8s is enabled)
 	if err := app.startPodCleanupJob(k8sDeployProvider); err != nil {
@@ -227,6 +236,12 @@ func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProv
 		app.workerService,
 		app.workerEventService,
 	)
+
+	// Wire endpoint service for status summary updates on worker status changes
+	// Validates: Requirement 4.3
+	if app.endpointService != nil {
+		app.lifecycleManager.SetEndpointService(app.endpointService)
+	}
 
 	// Register K8s provider if enabled
 	if k8sProvider != nil {
@@ -281,6 +296,12 @@ func (app *Application) initHandlers() error {
 	if app.endpointService != nil {
 		app.imageHandler = handler.NewImageHandler(app.endpointService, &app.config.Docker)
 		logger.InfoCtx(app.ctx, "Image handler initialized")
+	}
+
+	// Initialize Status Event Handler (for status event API)
+	if app.statusEventService != nil {
+		app.statusEventHandler = handler.NewStatusEventHandler(app.statusEventService)
+		logger.InfoCtx(app.ctx, "Status event handler initialized")
 	}
 
 	return nil
@@ -393,7 +414,7 @@ func (app *Application) setupResourceReleaser() error {
 // initHTTPServer initializes HTTP server
 func (app *Application) initHTTPServer() error {
 	// Initialize router
-	r := router.NewRouter(app.taskHandler, app.workerHandler, app.endpointHandler, app.autoscalerHandler, app.statisticsHandler, app.specHandler, app.imageHandler, app.monitoringHandler)
+	r := router.NewRouter(app.taskHandler, app.workerHandler, app.endpointHandler, app.autoscalerHandler, app.statisticsHandler, app.specHandler, app.imageHandler, app.monitoringHandler, app.statusEventHandler)
 
 	// Set Gin mode
 	gin.SetMode(app.config.Server.Mode)
@@ -493,6 +514,17 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 		}
 	}()
 
+	// Wire capacity manager into endpoint service for Spot status lookup in status summary
+	// Validates: Requirement 4.3
+	if app.endpointService != nil {
+		app.endpointService.SetCapacityManager(app.capacityMgr)
+	}
+
+	// Wire spot price lookup into lifecycle manager for recording spot price at worker creation
+	if app.lifecycleManager != nil {
+		app.lifecycleManager.SetSpotPriceLookup(&capacitySpotPriceLookup{mgr: app.capacityMgr})
+	}
+
 	logger.InfoCtx(app.ctx, "✅ Capacity manager setup completed")
 	return nil
 }
@@ -540,4 +572,17 @@ func (a *k8sPodCountAdapter) GetPodCountsBySpec(ctx context.Context) (map[string
 		}
 	}
 	return result, nil
+}
+
+// capacitySpotPriceLookup adapts capacity.Manager to lifecycle.SpotPriceLookup
+type capacitySpotPriceLookup struct {
+	mgr *capacity.Manager
+}
+
+func (a *capacitySpotPriceLookup) GetSpotPriceBySpec(specName string) (float64, string, bool) {
+	spotStatus := a.mgr.GetSpotStatusBySpec(specName)
+	if spotStatus == nil || spotStatus.Price <= 0 {
+		return 0, "", false
+	}
+	return spotStatus.Price, spotStatus.InstanceType, true
 }

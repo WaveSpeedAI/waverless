@@ -7,6 +7,7 @@ import (
 
 	"waverless/internal/model"
 	"waverless/internal/service"
+	endpointsvc "waverless/internal/service/endpoint"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
 	"waverless/pkg/store/mysql"
@@ -20,10 +21,19 @@ type CallbackHandler struct {
 	endpointRepo       *mysql.EndpointRepository
 	workerService      *service.WorkerService
 	workerEventService *service.WorkerEventService
+	endpointService    *endpointsvc.Service
+	spotPriceLookup    SpotPriceLookup
 
 	// Mutex to protect check-then-act operations for worker creation
 	// Key: endpoint:podName
 	workerCreationMu sync.Map
+}
+
+// SpotPriceLookup provides Spot price information for a given spec.
+type SpotPriceLookup interface {
+	// GetSpotPriceBySpec returns the current Spot price and instance type for the given spec.
+	// Returns (price, instanceType, ok). ok is false if Spot info is unavailable.
+	GetSpotPriceBySpec(specName string) (price float64, instanceType string, ok bool)
 }
 
 // NewCallbackHandler creates a new callback handler
@@ -41,6 +51,61 @@ func NewCallbackHandler(
 		workerService:      workerService,
 		workerEventService: workerEventService,
 	}
+}
+
+// SetEndpointService sets the endpoint service for status summary updates.
+// This enables automatic status summary recomputation when worker status changes.
+// Validates: Requirement 4.3
+func (h *CallbackHandler) SetEndpointService(svc *endpointsvc.Service) {
+	h.endpointService = svc
+}
+
+// SetSpotPriceLookup sets the spot price lookup for recording spot price at worker creation.
+func (h *CallbackHandler) SetSpotPriceLookup(lookup SpotPriceLookup) {
+	h.spotPriceLookup = lookup
+}
+
+// recordSpotPrice records the current Spot price on a newly created worker.
+// This snapshots the price at creation time for cost analysis and billing.
+func (h *CallbackHandler) recordSpotPrice(podName, endpoint string) {
+	if h.spotPriceLookup == nil || h.endpointService == nil {
+		return
+	}
+
+	// Look up the endpoint's spec name
+	endpointMeta, err := h.endpointService.GetEndpoint(h.ctx, endpoint)
+	if err != nil || endpointMeta == nil || endpointMeta.SpecName == "" {
+		return
+	}
+
+	price, instanceType, ok := h.spotPriceLookup.GetSpotPriceBySpec(endpointMeta.SpecName)
+	if !ok {
+		return
+	}
+
+	if err := h.workerRepo.UpdateSpotPrice(h.ctx, podName, price, instanceType); err != nil {
+		logger.WarnCtx(h.ctx, "Failed to record spot price for worker %s: %v", podName, err)
+	} else {
+		logger.InfoCtx(h.ctx, "Recorded spot price for worker %s: $%.6f/hr (%s)", podName, price, instanceType)
+	}
+}
+
+// triggerStatusSummaryUpdate triggers an async status summary update for the given endpoint.
+// This is called after any worker status change to keep the endpoint status summary current.
+// Validates: Requirement 4.3
+func (h *CallbackHandler) triggerStatusSummaryUpdate(endpoint string) {
+	if h.endpointService == nil {
+		return
+	}
+
+	// Run async to avoid blocking the callback chain
+	go func() {
+		if err := h.endpointService.UpdateStatusSummary(h.ctx, endpoint); err != nil {
+			logger.WarnCtx(h.ctx, "Failed to update status summary for endpoint %s: %v", endpoint, err)
+		} else {
+			logger.DebugCtx(h.ctx, "Status summary updated for endpoint %s", endpoint)
+		}
+	}()
 }
 
 // HandleWorkerStatusChange handles Worker status changes
@@ -91,6 +156,15 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 		h.workerEventService.RecordWorkerStarted(h.ctx, podName, endpoint)
 		logger.InfoCtx(h.ctx, "Recorded WORKER_STARTED event for new worker: %s", podName)
 	}
+
+	// Record spot price for new workers
+	if isNewWorker {
+		h.recordSpotPrice(podName, endpoint)
+	}
+
+	// Trigger status summary update for the endpoint
+	// Validates: Requirement 4.3
+	h.triggerStatusSummaryUpdate(endpoint)
 }
 
 // HandleWorkerDelete handles Worker deletion
@@ -135,6 +209,9 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 		worker, _ := h.workerRepo.GetByPodName(h.ctx, endpoint, podName)
 		if worker != nil && worker.Status == "OFFLINE" {
 			logger.InfoCtx(h.ctx, "Successfully marked worker %s as OFFLINE", podName)
+			// Trigger status summary update for the endpoint
+			// Validates: Requirement 4.3
+			h.triggerStatusSummaryUpdate(endpoint)
 			return
 		}
 
@@ -148,6 +225,10 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 
 	logger.WarnCtx(h.ctx, "Failed to mark worker offline for pod %s after %d retries (worker may not exist yet)",
 		podName, maxRetries)
+
+	// Trigger status summary update for the endpoint (even if marking offline failed)
+	// Validates: Requirement 4.3
+	h.triggerStatusSummaryUpdate(endpoint)
 }
 
 // HandleWorkerDraining handles Worker Draining
@@ -216,6 +297,10 @@ func (h *CallbackHandler) HandleWorkerFailure(event *provider.WorkerFailureEvent
 	} else {
 		logger.InfoCtx(h.ctx, "Worker failure recorded in database: pod=%s, type=%s", podName, failureInfo.Type)
 	}
+
+	// Trigger status summary update for the endpoint
+	// Validates: Requirement 4.3
+	h.triggerStatusSummaryUpdate(endpoint)
 }
 
 // HandleEndpointStatusChange handles Endpoint status changes

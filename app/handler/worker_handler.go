@@ -49,6 +49,16 @@ type WorkerWithPodInfo struct {
 	FailureType       string `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
 	FailureReason     string `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
 	FailureSuggestion string `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
+
+	// Pending phase information fields (Requirements 1.5, 2.4)
+	PendingPhase      string `json:"pendingPhase,omitempty"`      // SCHEDULING, WAITING_NODE, PULLING_IMAGE, INITIALIZING
+	PendingPhaseSince string `json:"pendingPhaseSince,omitempty"` // Timestamp when current pending phase started
+	PendingReason     string `json:"pendingReason,omitempty"`     // Reason for pending state
+	PendingMessage    string `json:"pendingMessage,omitempty"`    // Detailed message about pending state
+
+	// Spot instance cost tracking
+	SpotPrice        *float64 `json:"spotPrice,omitempty"`        // Spot price (USD/hour) at worker creation time
+	SpotInstanceType string   `json:"spotInstanceType,omitempty"` // Spot instance type (e.g., "g4dn.xlarge")
 }
 
 // Heartbeat handles worker heartbeat (compatible with runpod ping interface)
@@ -310,12 +320,35 @@ func (h *WorkerHandler) GetWorkerList(c *gin.Context) {
 			Worker: *worker,
 		}
 
-		// Add failure information from MySQL worker (Requirements 6.1, 6.2)
-		if mw, exists := mysqlWorkerByID[worker.ID]; exists && mw.FailureType != "" {
-			workerWithPod.FailureType = mw.FailureType
-			workerWithPod.FailureReason = mw.FailureReason
-			// Get suggestion from failure reason if available
-			workerWithPod.FailureSuggestion = getFailureSuggestion(mw.FailureType, mw.FailureReason)
+		// Add failure and pending information from MySQL worker (Requirements 1.5, 2.4, 6.1, 6.2)
+		if mw, exists := mysqlWorkerByID[worker.ID]; exists {
+			// Add failure information
+			if mw.FailureType != "" {
+				workerWithPod.FailureType = mw.FailureType
+				workerWithPod.FailureReason = mw.FailureReason
+				// Get suggestion from failure reason if available
+				workerWithPod.FailureSuggestion = getFailureSuggestion(mw.FailureType, mw.FailureReason)
+			}
+
+			// Add pending phase information (Requirements 1.5, 2.4)
+			if mw.PendingPhase != nil {
+				workerWithPod.PendingPhase = *mw.PendingPhase
+			}
+			if mw.PendingPhaseSince != nil {
+				workerWithPod.PendingPhaseSince = mw.PendingPhaseSince.Format("2006-01-02T15:04:05Z07:00")
+			}
+			if mw.PendingReason != nil {
+				workerWithPod.PendingReason = *mw.PendingReason
+			}
+			if mw.PendingMessage != nil {
+				workerWithPod.PendingMessage = *mw.PendingMessage
+			}
+
+			// Add spot price information
+			workerWithPod.SpotPrice = mw.SpotPrice
+			if mw.SpotInstanceType != nil {
+				workerWithPod.SpotInstanceType = *mw.SpotInstanceType
+			}
 		}
 
 		if worker.PodName != "" {
@@ -435,7 +468,7 @@ func (h *WorkerHandler) GetWorkerYAML(c *gin.Context) {
 }
 
 // WorkerDetailResponse represents the response for worker detail API
-// Includes failure information for Requirements 6.1, 6.2
+// Includes failure and pending information for Requirements 1.5, 2.4, 6.1, 6.2
 type WorkerDetailResponse struct {
 	ID                   int64   `json:"id"`
 	WorkerID             string  `json:"workerId"`
@@ -459,6 +492,16 @@ type WorkerDetailResponse struct {
 	FailureReason     string  `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
 	FailureSuggestion string  `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
 	FailureOccurredAt *string `json:"failureOccurredAt,omitempty"` // Timestamp when failure was detected
+
+	// Pending phase information fields (Requirements 1.5, 2.4)
+	PendingPhase      string  `json:"pendingPhase,omitempty"`      // SCHEDULING, WAITING_NODE, PULLING_IMAGE, INITIALIZING
+	PendingPhaseSince *string `json:"pendingPhaseSince,omitempty"` // Timestamp when current pending phase started
+	PendingReason     string  `json:"pendingReason,omitempty"`     // Reason for pending state
+	PendingMessage    string  `json:"pendingMessage,omitempty"`    // Detailed message about pending state
+
+	// Spot instance cost tracking
+	SpotPrice        *float64 `json:"spotPrice,omitempty"`        // Spot price (USD/hour) at worker creation time
+	SpotInstanceType string   `json:"spotInstanceType,omitempty"` // Spot instance type (e.g., "g4dn.xlarge")
 }
 
 // GetWorkerByID gets worker detail by worker ID
@@ -520,6 +563,27 @@ func (h *WorkerHandler) GetWorkerByID(c *gin.Context) {
 			failureOccurredAt := worker.FailureOccurredAt.Format("2006-01-02T15:04:05Z07:00")
 			response.FailureOccurredAt = &failureOccurredAt
 		}
+	}
+
+	// Add pending phase information if available (Requirements 1.5, 2.4)
+	if worker.PendingPhase != nil {
+		response.PendingPhase = *worker.PendingPhase
+	}
+	if worker.PendingPhaseSince != nil {
+		pendingPhaseSince := worker.PendingPhaseSince.Format("2006-01-02T15:04:05Z07:00")
+		response.PendingPhaseSince = &pendingPhaseSince
+	}
+	if worker.PendingReason != nil {
+		response.PendingReason = *worker.PendingReason
+	}
+	if worker.PendingMessage != nil {
+		response.PendingMessage = *worker.PendingMessage
+	}
+
+	// Add spot price information
+	response.SpotPrice = worker.SpotPrice
+	if worker.SpotInstanceType != nil {
+		response.SpotInstanceType = *worker.SpotInstanceType
 	}
 
 	c.JSON(http.StatusOK, response)

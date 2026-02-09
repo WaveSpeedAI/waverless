@@ -11,9 +11,10 @@ import (
 
 // Service coordinates endpoint metadata, deployment, and scaling responsibilities.
 type Service struct {
-	metadata   *MetadataManager
-	deployment *DeploymentManager
-	scaler     *ScalerManager
+	metadata          *MetadataManager
+	deployment        *DeploymentManager
+	scaler            *ScalerManager
+	statusSummaryDeps *StatusSummaryDependencies
 }
 
 // NewService wires all managers together into a single facade that handlers

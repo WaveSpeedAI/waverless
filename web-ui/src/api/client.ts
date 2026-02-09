@@ -16,6 +16,8 @@ import type {
   TaskTimelineResponse,
   TaskExecutionHistoryResponse,
   PVCInfo,
+  StatusEvent,
+  StatusEventFilter,
 } from '@/types';
 
 const client = axios.create({
@@ -69,6 +71,40 @@ export const api = {
     getWorkers: (name: string) => client.get<{ workers: WorkerWithPodInfo[] }>(`/endpoints/${name}/workers`),
     describePod: (endpoint: string, podName: string) =>
       client.get<PodDetail>(`/endpoints/${endpoint}/workers/${podName}/describe`),
+    // Status events for endpoint (Requirements 3.4, 3.5)
+    getStatusEvents: (name: string, params?: Omit<StatusEventFilter, 'endpoint'>) =>
+      client.get<StatusEvent[]>(`/endpoints/${name}/status-events`, {
+        params: {
+          limit: params?.limit,
+          offset: params?.offset,
+          start_time: params?.startTime,
+          end_time: params?.endTime,
+        },
+      }),
+  },
+
+  // Status Events API (Requirements 3.4, 3.5)
+  statusEvents: {
+    // Get status events for an endpoint
+    listByEndpoint: (endpoint: string, params?: Omit<StatusEventFilter, 'endpoint'>) =>
+      client.get<StatusEvent[]>(`/endpoints/${endpoint}/status-events`, {
+        params: {
+          limit: params?.limit,
+          offset: params?.offset,
+          start_time: params?.startTime,
+          end_time: params?.endTime,
+        },
+      }),
+    // Get status events for a worker
+    listByWorker: (workerId: string, params?: Omit<StatusEventFilter, 'workerId'>) =>
+      client.get<StatusEvent[]>(`/workers/${workerId}/status-events`, {
+        params: {
+          limit: params?.limit,
+          offset: params?.offset,
+          start_time: params?.startTime,
+          end_time: params?.endTime,
+        },
+      }),
   },
 
   // Apps (legacy alias)

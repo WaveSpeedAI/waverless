@@ -366,3 +366,96 @@ export interface VolumeInfo {
   type: string;
   source?: Record<string, any>;
 }
+
+
+// ============================================
+// Status Tracking Types (Endpoint Status Tracking Feature)
+// ============================================
+
+// Pending phase types for worker status tracking
+export type PendingPhase = 'SCHEDULING' | 'WAITING_NODE' | 'PULLING_IMAGE' | 'INITIALIZING';
+
+// Spot capacity status
+export type SpotCapacity = 'AVAILABLE' | 'LIMITED' | 'CONSTRAINED';
+
+// Spot status information for AWS Spot capacity
+export interface SpotStatus {
+  capacity: SpotCapacity;
+  score: number; // 1-10
+  price: number; // USD/hour
+  instanceType: string;
+}
+
+// Worker pending detail for status summary
+export interface WorkerPendingDetail {
+  workerId: string;
+  podName: string;
+  phase: PendingPhase;
+  reason: string;
+  message: string;
+  since: string; // ISO timestamp
+}
+
+// Worker failure detail for status summary
+export interface WorkerFailureDetail {
+  workerId: string;
+  podName: string;
+  failureType: string;
+  reason: string;
+  suggestion: string;
+  occurredAt: string; // ISO timestamp
+}
+
+// Endpoint status summary aggregating worker statuses
+export interface EndpointStatusSummary {
+  totalWorkers: number;
+  workersByStatus: Record<string, number>; // e.g., { ONLINE: 2, PENDING: 1 }
+  workersByPhase: Record<string, number>; // e.g., { WAITING_NODE: 1, PULLING_IMAGE: 0 }
+  pendingDetails?: WorkerPendingDetail[];
+  failureDetails?: WorkerFailureDetail[];
+  spotCapacity?: SpotStatus;
+  lastUpdated: string; // ISO timestamp
+}
+
+// Status event types
+export type StatusEventType = 'STATUS_CHANGE' | 'PHASE_CHANGE' | 'FAILURE' | 'RECOVERY';
+
+// Status event for timeline display
+export interface StatusEvent {
+  id: number;
+  workerId: string;
+  endpoint: string;
+  eventType: StatusEventType;
+  oldStatus?: string;
+  newStatus: string;
+  phase?: string;
+  reason?: string;
+  message?: string;
+  spotStatus?: SpotStatus;
+  createdAt: string; // ISO timestamp
+}
+
+// Status event filter for API queries
+export interface StatusEventFilter {
+  endpoint?: string;
+  workerId?: string;
+  eventType?: StatusEventType;
+  startTime?: string; // ISO timestamp
+  endTime?: string; // ISO timestamp
+  limit?: number;
+  offset?: number;
+}
+
+// Extended WorkerWithPodInfo with pending phase information
+export interface WorkerWithPendingInfo extends WorkerWithPodInfo {
+  pendingPhase?: PendingPhase;
+  pendingPhaseSince?: string; // ISO timestamp
+  pendingReason?: string;
+  pendingMessage?: string;
+  spotStatus?: SpotStatus; // Only for WAITING_NODE phase
+}
+
+// Extended AppInfo with status summary
+export interface AppInfoWithStatusSummary extends AppInfo {
+  statusSummary?: EndpointStatusSummary;
+}

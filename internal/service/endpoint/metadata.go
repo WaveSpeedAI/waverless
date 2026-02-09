@@ -281,6 +281,7 @@ func fromMySQLEndpoint(endpoint *mysql.Endpoint) *interfaces.EndpointMetadata {
 		Status:            endpoint.Status,
 		HealthStatus:      endpoint.HealthStatus,
 		LastHealthCheckAt: endpoint.LastHealthCheckAt,
+		StatusSummary:     endpoint.StatusSummary,
 		CreatedAt:         endpoint.CreatedAt,
 		UpdatedAt:         endpoint.UpdatedAt,
 	}

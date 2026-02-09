@@ -13,6 +13,7 @@ type endpointRepository interface {
 	Update(ctx context.Context, endpoint *mysql.Endpoint) error
 	Delete(ctx context.Context, name string) error
 	List(ctx context.Context) ([]*mysql.Endpoint, error)
+	UpdateStatusSummary(ctx context.Context, endpointName string, statusSummary map[string]any) error
 }
 
 type autoscalerConfigRepository interface {

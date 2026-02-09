@@ -272,3 +272,28 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// UpdateStatusSummary updates the status_summary JSON field for an endpoint.
+// This method is called when any Worker status changes to update the aggregated status.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - endpointName: The name of the endpoint to update
+//   - statusSummary: The computed status summary as a map (will be stored as JSON)
+//
+// Returns:
+//   - error if the database update fails
+//
+// Validates: Requirements 4.3 - When any Worker status changes, the Waverless SHALL update the Endpoint_Status_Summary
+func (r *EndpointRepository) UpdateStatusSummary(ctx context.Context, endpointName string, statusSummary map[string]any) error {
+	now := time.Now()
+	updates := map[string]any{
+		"status_summary":         JSONMap(statusSummary),
+		"last_status_summary_at": now,
+		"updated_at":             gorm.Expr("CURRENT_TIMESTAMP(3)"),
+	}
+
+	return r.ds.DB(ctx).Model(&Endpoint{}).
+		Where("endpoint = ?", endpointName).
+		Updates(updates).Error
+}

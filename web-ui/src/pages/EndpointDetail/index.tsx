@@ -9,9 +9,11 @@ import {
 } from '@ant-design/icons';
 import * as echarts from 'echarts';
 import { api } from '@/api/client';
-import { AppInfo, WorkerWithPodInfo, UpdateEndpointConfigRequest, UpdateDeploymentRequest, SpecInfo, PVCInfo, Task } from '@/types';
+import { AppInfo, WorkerWithPodInfo, UpdateEndpointConfigRequest, UpdateDeploymentRequest, SpecInfo, PVCInfo, Task, EndpointStatusSummary as StatusSummaryType } from '@/types';
+import { EndpointStatusSummary } from '@/components/EndpointStatusSummary';
+import { StatusTimeline } from '@/components/StatusTimeline';
 
-type TabKey = 'overview' | 'metrics' | 'workers' | 'tasks' | 'scaling' | 'settings';
+type TabKey = 'overview' | 'metrics' | 'workers' | 'tasks' | 'scaling' | 'status' | 'settings';
 
 const FIELD_TIPS: Record<string, string> = {
   priority: 'Higher numbers get resources first. Default 50.',
@@ -204,9 +206,9 @@ const EndpointDetailPage = () => {
 
       {/* Tabs */}
       <div className="tabs mb-4">
-        {(['overview', 'metrics', 'workers', 'tasks', 'scaling', 'settings'] as TabKey[]).map(t => (
+        {(['overview', 'metrics', 'workers', 'tasks', 'scaling', 'status', 'settings'] as TabKey[]).map(t => (
           <div key={t} className={`tab ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-            {t === 'scaling' ? 'Scaling History' : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'scaling' ? 'Scaling History' : t === 'status' ? 'Status Events' : t.charAt(0).toUpperCase() + t.slice(1)}
           </div>
         ))}
       </div>
@@ -382,6 +384,14 @@ const EndpointDetailPage = () => {
 
       {/* Scaling History Tab */}
       {activeTab === 'scaling' && <ScalingHistoryTab endpoint={name!} />}
+
+      {/* Status Events Tab */}
+      {activeTab === 'status' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <EndpointStatusSummary summary={(ep as any).statusSummary} />
+          <StatusTimeline endpoint={name!} autoRefresh refreshInterval={30000} />
+        </div>
+      )}
 
       {/* Settings Tab */}
       {activeTab === 'settings' && <SettingsTab endpoint={ep} name={name!} />}

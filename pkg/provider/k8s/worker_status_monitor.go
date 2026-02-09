@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"waverless/pkg/interfaces"
@@ -14,17 +15,38 @@ import (
 	"waverless/pkg/store/mysql"
 )
 
+// StatusEventRecorder interface for recording status events.
+// This allows for dependency injection and easier testing.
+type StatusEventRecorder interface {
+	// RecordStatusChange records a worker status change event.
+	RecordStatusChange(ctx context.Context, workerID, endpoint, oldStatus, newStatus, reason, message string) error
+	// RecordPhaseChange records a pending phase change event.
+	RecordPhaseChange(ctx context.Context, workerID, endpoint, phase, reason, message string, spotStatus *status.SpotStatus) error
+	// RecordFailure records a worker failure event.
+	RecordFailure(ctx context.Context, workerID, endpoint, reason, message string) error
+}
+
 // K8sWorkerStatusMonitor monitors K8s worker (pod) status changes and detects failures.
 // It provides methods for detecting failures from pod info and updating worker records.
 //
 // Usage: Use DetectFailure() and UpdateWorkerFailure() within an existing pod watcher
 // (setupPodStatusWatcher in initializers.go) to avoid duplicate callbacks.
 //
-// Validates: Requirements 3.1, 3.2, 3.3
+// Validates: Requirements 1.4, 3.1, 3.2, 3.3
 type K8sWorkerStatusMonitor struct {
-	manager    *Manager
-	workerRepo *mysql.WorkerRepository
-	sanitizer  *status.StatusSanitizer
+	manager             *Manager
+	workerRepo          *mysql.WorkerRepository
+	sanitizer           *status.StatusSanitizer
+	statusEventRecorder StatusEventRecorder
+	pendingDetector     *status.PendingPhaseDetector
+
+	// workerStatusCache tracks the last known status for each worker to detect changes.
+	// Key: workerID (podName), Value: last known status
+	workerStatusCache map[string]string
+	// workerPhaseCache tracks the last known pending phase for each worker.
+	// Key: workerID (podName), Value: last known pending phase
+	workerPhaseCache map[string]status.PendingPhase
+	cacheMu          sync.RWMutex
 }
 
 // NewK8sWorkerStatusMonitor creates a new K8s worker status monitor.
@@ -37,10 +59,28 @@ type K8sWorkerStatusMonitor struct {
 //   - A new K8sWorkerStatusMonitor instance
 func NewK8sWorkerStatusMonitor(manager *Manager, workerRepo *mysql.WorkerRepository) *K8sWorkerStatusMonitor {
 	return &K8sWorkerStatusMonitor{
-		manager:    manager,
-		workerRepo: workerRepo,
-		sanitizer:  status.NewStatusSanitizer(),
+		manager:           manager,
+		workerRepo:        workerRepo,
+		sanitizer:         status.NewStatusSanitizer(),
+		workerStatusCache: make(map[string]string),
+		workerPhaseCache:  make(map[string]status.PendingPhase),
 	}
+}
+
+// WithStatusEventRecorder sets the status event recorder for recording status events.
+// This enables the monitor to record status change, phase change, and failure events.
+// Validates: Requirements 1.4, 3.1
+func (m *K8sWorkerStatusMonitor) WithStatusEventRecorder(recorder StatusEventRecorder) *K8sWorkerStatusMonitor {
+	m.statusEventRecorder = recorder
+	return m
+}
+
+// WithPendingPhaseDetector sets the pending phase detector for detecting pending phases.
+// This enables the monitor to detect and record pending phase changes.
+// Validates: Requirements 1.1, 1.2, 1.3
+func (m *K8sWorkerStatusMonitor) WithPendingPhaseDetector(detector *status.PendingPhaseDetector) *K8sWorkerStatusMonitor {
+	m.pendingDetector = detector
+	return m
 }
 
 // DetectFailure checks if the pod info indicates a failure state.
@@ -275,4 +315,150 @@ func (m *K8sWorkerStatusMonitor) GetManager() *Manager {
 // This is useful for sanitizing error messages externally.
 func (m *K8sWorkerStatusMonitor) GetSanitizer() *status.StatusSanitizer {
 	return m.sanitizer
+}
+
+// HandleStatusChange handles a worker status change and records the event.
+// This method should be called when a pod status changes.
+// It detects status changes, phase changes, and records appropriate events.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - podName: The name of the pod (used as worker ID)
+//   - endpoint: The endpoint name
+//   - info: The current pod information
+//   - podConditions: The pod conditions (optional, for pending phase detection)
+//
+// Validates: Requirements 1.4, 3.1
+func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName, endpoint string, info *interfaces.PodInfo, podConditions []interfaces.PodCondition) {
+	if info == nil {
+		return
+	}
+
+	// Get the current status from pod info
+	currentStatus := m.normalizeStatus(info.Phase, info.Status)
+
+	// Check if status has changed
+	m.cacheMu.RLock()
+	oldStatus, hasOldStatus := m.workerStatusCache[podName]
+	m.cacheMu.RUnlock()
+
+	statusChanged := !hasOldStatus || oldStatus != currentStatus
+
+	// Record status change event if status changed
+	if statusChanged && m.statusEventRecorder != nil {
+		oldStatusStr := ""
+		if hasOldStatus {
+			oldStatusStr = oldStatus
+		}
+
+		if err := m.statusEventRecorder.RecordStatusChange(ctx, podName, endpoint, oldStatusStr, currentStatus, info.Reason, info.Message); err != nil {
+			logger.WarnCtx(ctx, "Failed to record status change event for worker %s: %v", podName, err)
+		} else {
+			logger.DebugCtx(ctx, "Recorded status change event for worker %s: %s -> %s", podName, oldStatusStr, currentStatus)
+		}
+
+		// Update status cache
+		m.cacheMu.Lock()
+		m.workerStatusCache[podName] = currentStatus
+		m.cacheMu.Unlock()
+	}
+
+	// Handle pending phase detection and recording
+	if currentStatus == "Pending" && m.pendingDetector != nil {
+		m.handlePendingPhaseChange(ctx, podName, endpoint, info, podConditions)
+	} else {
+		// Clear phase cache if not pending
+		m.cacheMu.Lock()
+		delete(m.workerPhaseCache, podName)
+		m.cacheMu.Unlock()
+	}
+}
+
+// handlePendingPhaseChange detects and records pending phase changes.
+// Validates: Requirements 1.4, 3.1
+func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, podName, endpoint string, info *interfaces.PodInfo, podConditions []interfaces.PodCondition) {
+	// Detect the current pending phase
+	phaseInfo := m.pendingDetector.DetectPhase(info, podConditions)
+	if phaseInfo == nil {
+		return
+	}
+
+	currentPhase := phaseInfo.Phase
+
+	// Check if phase has changed
+	m.cacheMu.RLock()
+	oldPhase, hasOldPhase := m.workerPhaseCache[podName]
+	m.cacheMu.RUnlock()
+
+	phaseChanged := !hasOldPhase || oldPhase != currentPhase
+
+	// Record phase change event if phase changed
+	if phaseChanged && m.statusEventRecorder != nil {
+		if err := m.statusEventRecorder.RecordPhaseChange(ctx, podName, endpoint, string(currentPhase), phaseInfo.Reason, phaseInfo.Message, phaseInfo.SpotStatus); err != nil {
+			logger.WarnCtx(ctx, "Failed to record phase change event for worker %s: %v", podName, err)
+		} else {
+			logger.DebugCtx(ctx, "Recorded phase change event for worker %s: %s -> %s", podName, oldPhase, currentPhase)
+		}
+
+		// Update phase cache
+		m.cacheMu.Lock()
+		m.workerPhaseCache[podName] = currentPhase
+		m.cacheMu.Unlock()
+	}
+}
+
+// HandleFailure handles a worker failure and records the event.
+// This method should be called when a failure is detected.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - podName: The name of the pod (used as worker ID)
+//   - endpoint: The endpoint name
+//   - failureInfo: The failure information
+//
+// Validates: Requirements 3.1
+func (m *K8sWorkerStatusMonitor) HandleFailure(ctx context.Context, podName, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
+	if failureInfo == nil || m.statusEventRecorder == nil {
+		return
+	}
+
+	// Record failure event
+	if err := m.statusEventRecorder.RecordFailure(ctx, podName, endpoint, failureInfo.Reason, failureInfo.SanitizedMsg); err != nil {
+		logger.WarnCtx(ctx, "Failed to record failure event for worker %s: %v", podName, err)
+	} else {
+		logger.DebugCtx(ctx, "Recorded failure event for worker %s: %s - %s", podName, failureInfo.Reason, failureInfo.SanitizedMsg)
+	}
+}
+
+// normalizeStatus normalizes the pod phase and status to a consistent status string.
+// This ensures consistent status values for event recording.
+func (m *K8sWorkerStatusMonitor) normalizeStatus(phase, podStatus string) string {
+	// Use phase as the primary status indicator
+	switch phase {
+	case "Running":
+		return "Running"
+	case "Pending":
+		return "Pending"
+	case "Succeeded":
+		return "Succeeded"
+	case "Failed":
+		return "Failed"
+	case "Unknown":
+		return "Unknown"
+	default:
+		// Fall back to podStatus if phase is not recognized
+		if podStatus != "" {
+			return podStatus
+		}
+		return "Unknown"
+	}
+}
+
+// ClearWorkerCache removes a worker from the status and phase caches.
+// This should be called when a worker is deleted.
+func (m *K8sWorkerStatusMonitor) ClearWorkerCache(podName string) {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	delete(m.workerStatusCache, podName)
+	delete(m.workerPhaseCache, podName)
 }

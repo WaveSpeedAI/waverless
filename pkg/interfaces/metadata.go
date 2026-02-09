@@ -124,6 +124,10 @@ type EndpointMetadata struct {
 	ShmSize      string        `json:"shmSize,omitempty"`      // Shared memory size from deployment
 	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"` // PVC volume mounts from deployment
 
+	// Status Summary (for endpoint status tracking feature)
+	// Contains aggregated worker status information including pending phases and failures
+	StatusSummary map[string]any `json:"statusSummary,omitempty"`
+
 	// Timestamps
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

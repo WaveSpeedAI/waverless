@@ -433,3 +433,14 @@ func (r *WorkerRepository) GetWorkersByFailureType(ctx context.Context, failureT
 	err := r.ds.DB(ctx).Where("failure_type = ? AND status != ?", failureType, "OFFLINE").Find(&workers).Error
 	return workers, err
 }
+
+// UpdateSpotPrice records the Spot instance price and type on a worker.
+// This is called once at worker creation time to snapshot the cost for billing.
+func (r *WorkerRepository) UpdateSpotPrice(ctx context.Context, podName string, price float64, instanceType string) error {
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"spot_price":         price,
+			"spot_instance_type": instanceType,
+		}).Error
+}
