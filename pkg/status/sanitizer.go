@@ -207,6 +207,31 @@ var TimeoutErrorMappings = map[string]SanitizedError{
 	},
 }
 
+// NodeProvisionErrorMappings contains default mappings for NODE_PROVISION_FAILED type.
+var NodeProvisionErrorMappings = map[string]SanitizedError{
+	"UnfulfillableCapacity": {
+		UserMessage: "GPU node provisioning failed due to capacity exhaustion",
+		Suggestion:  "Current GPU spec capacity is insufficient, please try again later or select a different GPU spec",
+		ErrorCode:   "NODE_UNFULFILLABLE",
+	},
+	"InsufficientCapacity": {
+		UserMessage: "Insufficient capacity to provision GPU node",
+		Suggestion:  "The cloud provider cannot fulfill the request right now. Please try again later",
+		ErrorCode:   "NODE_INSUFFICIENT",
+	},
+	"NodeProvisionTimeout": {
+		UserMessage: "Node provisioning timed out",
+		Suggestion:  "The system waited too long for a GPU node to become available. Please try again later or choose a different GPU spec",
+		ErrorCode:   "NODE_TIMEOUT",
+	},
+	// Generic fallback
+	"default": {
+		UserMessage: "GPU node provisioning failed",
+		Suggestion:  "Please try again later or select a different GPU spec",
+		ErrorCode:   "NODE_PROVISION_FAIL",
+	},
+}
+
 // UnknownErrorMappings contains default mappings for UNKNOWN type.
 var UnknownErrorMappings = map[string]SanitizedError{
 	"default": {
@@ -228,6 +253,7 @@ func NewStatusSanitizer() *StatusSanitizer {
 	s.errorMappings[interfaces.FailureTypeContainerCrash] = ContainerCrashErrorMappings
 	s.errorMappings[interfaces.FailureTypeResourceLimit] = ResourceLimitErrorMappings
 	s.errorMappings[interfaces.FailureTypeTimeout] = TimeoutErrorMappings
+	s.errorMappings[interfaces.FailureTypeNodeProvision] = NodeProvisionErrorMappings
 	s.errorMappings[interfaces.FailureTypeUnknown] = UnknownErrorMappings
 
 	return s

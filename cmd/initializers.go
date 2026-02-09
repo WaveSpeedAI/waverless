@@ -408,6 +408,9 @@ func (app *Application) setupResourceReleaser() error {
 	if app.config.ResourceReleaser.ImagePullTimeout > 0 {
 		releaserConfig.ImagePullTimeout = app.config.ResourceReleaser.ImagePullTimeout
 	}
+	if app.config.ResourceReleaser.NodeProvisionTimeout > 0 {
+		releaserConfig.NodeProvisionTimeout = app.config.ResourceReleaser.NodeProvisionTimeout
+	}
 	if app.config.ResourceReleaser.CheckInterval > 0 {
 		releaserConfig.CheckInterval = app.config.ResourceReleaser.CheckInterval
 	}
@@ -425,8 +428,8 @@ func (app *Application) setupResourceReleaser() error {
 
 	// Start the releaser in a goroutine
 	go func() {
-		logger.InfoCtx(app.ctx, "Starting resource releaser with config: imagePullTimeout=%v, checkInterval=%v, maxRetries=%d",
-			releaserConfig.ImagePullTimeout, releaserConfig.CheckInterval, releaserConfig.MaxRetries)
+		logger.InfoCtx(app.ctx, "Starting resource releaser with config: imagePullTimeout=%v, nodeProvisionTimeout=%v, checkInterval=%v, maxRetries=%d",
+			releaserConfig.ImagePullTimeout, releaserConfig.NodeProvisionTimeout, releaserConfig.CheckInterval, releaserConfig.MaxRetries)
 		releaser.Start(app.ctx)
 	}()
 

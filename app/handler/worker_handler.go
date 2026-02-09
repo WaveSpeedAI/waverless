@@ -46,7 +46,7 @@ type WorkerWithPodInfo struct {
 	DeletionTimestamp string `json:"deletionTimestamp,omitempty"` // Set when pod is terminating
 
 	// Failure information fields (Requirements 6.1, 6.2)
-	FailureType       string `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
+	FailureType       string `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, NODE_PROVISION_FAILED, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
 	FailureReason     string `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
 	FailureSuggestion string `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
 
@@ -488,7 +488,7 @@ type WorkerDetailResponse struct {
 	PodStartedAt         *string `json:"podStartedAt,omitempty"`
 
 	// Failure information fields (Requirements 6.1, 6.2)
-	FailureType       string  `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
+	FailureType       string  `json:"failureType,omitempty"`       // IMAGE_PULL_FAILED, CONTAINER_CRASH, NODE_PROVISION_FAILED, RESOURCE_LIMIT, TIMEOUT, UNKNOWN
 	FailureReason     string  `json:"failureReason,omitempty"`     // Sanitized user-friendly failure message
 	FailureSuggestion string  `json:"failureSuggestion,omitempty"` // Actionable suggestion for the user
 	FailureOccurredAt *string `json:"failureOccurredAt,omitempty"` // Timestamp when failure was detected

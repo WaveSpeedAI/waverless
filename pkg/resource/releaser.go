@@ -24,6 +24,11 @@ type ResourceReleaserConfig struct {
 	// Default: 5 minutes
 	ImagePullTimeout time.Duration `yaml:"imagePullTimeout"`
 
+	// NodeProvisionTimeout is the maximum time to wait for node provisioning (WAITING_NODE phase)
+	// before terminating the worker and scaling down the endpoint.
+	// Default: 30 minutes
+	NodeProvisionTimeout time.Duration `yaml:"nodeProvisionTimeout"`
+
 	// CheckInterval is the interval between checks for stuck workers.
 	// Default: 30 seconds
 	CheckInterval time.Duration `yaml:"checkInterval"`
@@ -36,9 +41,10 @@ type ResourceReleaserConfig struct {
 // DefaultResourceReleaserConfig returns the default configuration for ResourceReleaser.
 func DefaultResourceReleaserConfig() *ResourceReleaserConfig {
 	return &ResourceReleaserConfig{
-		ImagePullTimeout: 5 * time.Minute,
-		CheckInterval:    30 * time.Second,
-		MaxRetries:       3,
+		ImagePullTimeout:     5 * time.Minute,
+		NodeProvisionTimeout: 30 * time.Minute,
+		CheckInterval:        30 * time.Second,
+		MaxRetries:           3,
 	}
 }
 
@@ -123,6 +129,7 @@ func (r *ResourceReleaser) Start(ctx context.Context) {
 
 	logger.Info("ResourceReleaser started",
 		zap.Duration("imagePullTimeout", r.config.ImagePullTimeout),
+		zap.Duration("nodeProvisionTimeout", r.config.NodeProvisionTimeout),
 		zap.Duration("checkInterval", r.config.CheckInterval),
 		zap.Int("maxRetries", r.config.MaxRetries),
 	)
@@ -152,7 +159,8 @@ func (r *ResourceReleaser) Start(ctx context.Context) {
 // 1. Get all workers with IMAGE_PULL_FAILED or CONTAINER_CRASH failure type
 // 2. Check if failure duration exceeds timeout
 // 3. Call provider's TerminateWorker if available
-// 4. Update endpoint health status
+// 4. Check workers stuck in WAITING_NODE phase beyond NodeProvisionTimeout
+// 5. Update endpoint health status
 //
 // Parameters:
 //   - ctx: Context for database and provider operations
@@ -179,59 +187,58 @@ func (r *ResourceReleaser) CheckAndRelease(ctx context.Context) {
 	// Combine both types of failed workers
 	workers := append(imagePullWorkers, containerCrashWorkers...)
 
-	if len(workers) == 0 {
-		// Clean up tracked workers that are no longer in failed state
-		r.cleanupTrackedWorkers(ctx)
-		return
-	}
-
-	logger.Debug("Found workers with failures",
-		zap.Int("imagePullCount", len(imagePullWorkers)),
-		zap.Int("containerCrashCount", len(containerCrashWorkers)),
-		zap.Int("totalCount", len(workers)),
-	)
-
 	// Track endpoints that need health status update
 	affectedEndpoints := make(map[string]bool)
 
-	// Step 2 & 3: Check timeout and terminate if needed
-	for _, worker := range workers {
-		if worker.FailureOccurredAt == nil {
-			continue
-		}
-
-		// Track the first failure time for this worker
-		info := r.getOrCreateFailedWorkerInfo(worker.PodName, *worker.FailureOccurredAt)
-
-		// Calculate how long the worker has been in failed state
-		// Use time.Now() for consistency with how GORM stores/retrieves time
-		now := time.Now()
-		failureDuration := now.Sub(info.firstFailureTime)
-
-		logger.Debug("Checking worker failure duration",
-			zap.String("workerID", worker.WorkerID),
-			zap.String("endpoint", worker.Endpoint),
-			zap.Time("firstFailureTime", info.firstFailureTime),
-			zap.Time("now", now),
-			zap.Duration("failureDuration", failureDuration),
-			zap.Duration("timeout", r.config.ImagePullTimeout),
+	if len(workers) > 0 {
+		logger.Debug("Found workers with failures",
+			zap.Int("imagePullCount", len(imagePullWorkers)),
+			zap.Int("containerCrashCount", len(containerCrashWorkers)),
+			zap.Int("totalCount", len(workers)),
 		)
 
-		if failureDuration >= r.config.ImagePullTimeout {
-			// Worker has exceeded timeout, attempt to terminate
-			r.terminateWorker(ctx, worker, &info)
-			affectedEndpoints[worker.Endpoint] = true
-		} else {
-			logger.Debug("Worker still within timeout period",
+		// Step 2 & 3: Check timeout and terminate if needed
+		for _, worker := range workers {
+			if worker.FailureOccurredAt == nil {
+				continue
+			}
+
+			// Track the first failure time for this worker
+			info := r.getOrCreateFailedWorkerInfo(worker.PodName, *worker.FailureOccurredAt)
+
+			// Calculate how long the worker has been in failed state
+			// Use time.Now() for consistency with how GORM stores/retrieves time
+			now := time.Now()
+			failureDuration := now.Sub(info.firstFailureTime)
+
+			logger.Debug("Checking worker failure duration",
 				zap.String("workerID", worker.WorkerID),
 				zap.String("endpoint", worker.Endpoint),
+				zap.Time("firstFailureTime", info.firstFailureTime),
+				zap.Time("now", now),
 				zap.Duration("failureDuration", failureDuration),
 				zap.Duration("timeout", r.config.ImagePullTimeout),
 			)
+
+			if failureDuration >= r.config.ImagePullTimeout {
+				// Worker has exceeded timeout, attempt to terminate
+				r.terminateWorker(ctx, worker, &info)
+				affectedEndpoints[worker.Endpoint] = true
+			} else {
+				logger.Debug("Worker still within timeout period",
+					zap.String("workerID", worker.WorkerID),
+					zap.String("endpoint", worker.Endpoint),
+					zap.Duration("failureDuration", failureDuration),
+					zap.Duration("timeout", r.config.ImagePullTimeout),
+				)
+			}
 		}
 	}
 
-	// Step 4: Update endpoint health status for all endpoints with failed workers
+	// Step 4: Check workers stuck in WAITING_NODE phase beyond NodeProvisionTimeout
+	r.checkWaitingNodeWorkers(ctx, affectedEndpoints)
+
+	// Step 5: Update endpoint health status for all endpoints with failed workers
 	// This ensures health status is always up-to-date, not just when workers are terminated
 	endpointsToUpdate := make(map[string]bool)
 	for _, worker := range workers {
@@ -242,7 +249,7 @@ func (r *ResourceReleaser) CheckAndRelease(ctx context.Context) {
 		endpointsToUpdate[endpoint] = true
 	}
 
-	// Step 5: Check UNHEALTHY/DEGRADED endpoints that may have recovered
+	// Step 6: Check UNHEALTHY/DEGRADED endpoints that may have recovered
 	// When all failed workers become OFFLINE, the endpoint should recover to HEALTHY
 	unhealthyEndpoints, err := r.endpointRepo.GetByHealthStatus(ctx, string(model.HealthStatusUnhealthy))
 	if err != nil {
@@ -374,6 +381,94 @@ func (r *ResourceReleaser) updateWorkerTimeoutStatus(ctx context.Context, worker
 	}
 }
 
+// checkWaitingNodeWorkers checks for workers stuck in WAITING_NODE pending phase
+// beyond the NodeProvisionTimeout. When a worker has been waiting for node provisioning
+// for too long (default 30 minutes), it marks the worker with NODE_PROVISION_FAILED failure
+// and terminates it, similar to how IMAGE_PULL_FAILED workers are handled.
+func (r *ResourceReleaser) checkWaitingNodeWorkers(ctx context.Context, affectedEndpoints map[string]bool) {
+	waitingWorkers, err := r.workerRepo.GetWorkersInPendingPhase(ctx, "WAITING_NODE")
+	if err != nil {
+		logger.Error("Failed to get workers in WAITING_NODE phase", zap.Error(err))
+		return
+	}
+
+	if len(waitingWorkers) == 0 {
+		return
+	}
+
+	now := time.Now()
+	for _, worker := range waitingWorkers {
+		// Use pending_phase_since as the start time; fall back to created_at
+		var waitingSince time.Time
+		if worker.PendingPhaseSince != nil {
+			waitingSince = *worker.PendingPhaseSince
+		} else {
+			waitingSince = worker.CreatedAt
+		}
+
+		waitDuration := now.Sub(waitingSince)
+		if waitDuration < r.config.NodeProvisionTimeout {
+			logger.Debug("Worker still within node provision timeout",
+				zap.String("workerID", worker.WorkerID),
+				zap.String("endpoint", worker.Endpoint),
+				zap.Duration("waitDuration", waitDuration),
+				zap.Duration("timeout", r.config.NodeProvisionTimeout),
+			)
+			continue
+		}
+
+		// Build a user-friendly failure reason
+		failureReason := "Node provisioning timed out after " + r.config.NodeProvisionTimeout.String()
+		if worker.PendingReason != nil && *worker.PendingReason != "" {
+			failureReason += ": " + *worker.PendingReason
+		}
+
+		logger.Info("Worker exceeded node provision timeout, marking as NODE_PROVISION_FAILED",
+			zap.String("workerID", worker.WorkerID),
+			zap.String("endpoint", worker.Endpoint),
+			zap.Duration("waitDuration", waitDuration),
+		)
+
+		// Mark the worker with NODE_PROVISION_FAILED failure type
+		failureDetails := ""
+		if worker.PendingMessage != nil {
+			failureDetails = *worker.PendingMessage
+		}
+		if err := r.workerRepo.UpdateWorkerFailure(
+			ctx,
+			worker.PodName,
+			string(interfaces.FailureTypeNodeProvision),
+			failureReason,
+			failureDetails,
+			now,
+		); err != nil {
+			logger.Error("Failed to update worker node provision failure",
+				zap.String("workerID", worker.WorkerID),
+				zap.Error(err),
+			)
+		}
+
+		// Terminate the worker
+		if terminator, ok := r.deployProvider.(interfaces.WorkerTerminator); ok {
+			reason := "NODE_PROVISION_TIMEOUT: Node provisioning exceeded timeout of " + r.config.NodeProvisionTimeout.String()
+			if err := terminator.TerminateWorker(ctx, worker.Endpoint, worker.WorkerID, reason); err != nil {
+				logger.Error("Failed to terminate worker stuck in WAITING_NODE",
+					zap.String("workerID", worker.WorkerID),
+					zap.String("endpoint", worker.Endpoint),
+					zap.Error(err),
+				)
+			} else {
+				logger.Info("Successfully terminated worker stuck in WAITING_NODE",
+					zap.String("workerID", worker.WorkerID),
+					zap.String("endpoint", worker.Endpoint),
+				)
+			}
+		}
+
+		affectedEndpoints[worker.Endpoint] = true
+	}
+}
+
 // UpdateEndpointHealthStatus updates the health status of an endpoint based on worker failures.
 // It implements Property 7: Endpoint Health Status Derivation from the design document.
 //
@@ -410,7 +505,8 @@ func (r *ResourceReleaser) UpdateEndpointHealthStatus(ctx context.Context, endpo
 	var firstFailureReason string
 	for _, w := range workers {
 		if w.FailureType == string(interfaces.FailureTypeImagePull) ||
-			w.FailureType == string(interfaces.FailureTypeContainerCrash) {
+			w.FailureType == string(interfaces.FailureTypeContainerCrash) ||
+			w.FailureType == string(interfaces.FailureTypeNodeProvision) {
 			failedWorkers++
 			// Use the first worker's failure reason as the health message
 			if firstFailureReason == "" && w.FailureReason != "" {

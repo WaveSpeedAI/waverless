@@ -56,6 +56,9 @@ func (p *KarpenterProvider) Watch(ctx context.Context, callback func(interfaces.
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			p.handleNodeClaim(ctx, newObj.(*unstructured.Unstructured), callback)
 		},
+		DeleteFunc: func(obj interface{}) {
+			p.handleNodeClaimDelete(ctx, obj, callback)
+		},
 	})
 
 	// Start informer
@@ -171,6 +174,83 @@ func (p *KarpenterProvider) isNodeClaimReady(obj *unstructured.Unstructured) boo
 		}
 	}
 	return false
+}
+
+// handleNodeClaimDelete handles NodeClaim deletion events.
+// When Karpenter deletes a NodeClaim due to capacity errors (e.g. InsufficientCapacityError),
+// the NodeClaim is created and deleted so quickly that Add/Update handlers may not see the
+// failure condition. By checking the failureCache on delete, we ensure the sold_out status
+// is emitted even for these fast-fail scenarios.
+func (p *KarpenterProvider) handleNodeClaimDelete(ctx context.Context, obj interface{}, callback func(interfaces.CapacityEvent)) {
+	// Handle DeletedFinalStateUnknown (informer may wrap deleted objects)
+	var u *unstructured.Unstructured
+	switch t := obj.(type) {
+	case *unstructured.Unstructured:
+		u = t
+	case cache.DeletedFinalStateUnknown:
+		var ok bool
+		u, ok = t.Obj.(*unstructured.Unstructured)
+		if !ok {
+			return
+		}
+	default:
+		return
+	}
+
+	labels := u.GetLabels()
+	nodePool := labels["karpenter.sh/nodepool"]
+	specName, ok := p.nodePoolToSpec[nodePool]
+	if !ok {
+		return
+	}
+
+	// Check if this NodeClaim had a capacity failure condition before deletion
+	conditions, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if found {
+		for _, c := range conditions {
+			cond, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			condType, _ := cond["type"].(string)
+			status, _ := cond["status"].(string)
+			reason, _ := cond["reason"].(string)
+			message, _ := cond["message"].(string)
+
+			if condType == "Launched" && status == "False" && p.isCapacityError(reason, message) {
+				p.failureCacheMu.Lock()
+				p.failureCache[specName] = time.Now()
+				p.failureCacheMu.Unlock()
+
+				logger.WarnCtx(ctx, "NodeClaim deleted with capacity failure: spec=%s, reason=%s", specName, reason)
+				callback(interfaces.CapacityEvent{
+					SpecName:  specName,
+					Status:    interfaces.CapacitySoldOut,
+					Reason:    "nodeclaim:" + reason,
+					UpdatedAt: time.Now(),
+				})
+				return
+			}
+		}
+	}
+
+	// Even without explicit failure conditions, if the NodeClaim was never ready
+	// and we have a recent failure in cache, re-emit sold_out to prevent CheckAll from overriding
+	p.failureCacheMu.RLock()
+	lastFailure, hasRecentFailure := p.failureCache[specName]
+	p.failureCacheMu.RUnlock()
+
+	if hasRecentFailure && time.Since(lastFailure) < 5*time.Minute {
+		if !p.isNodeClaimReady(u) {
+			logger.WarnCtx(ctx, "Non-ready NodeClaim deleted for spec=%s (recent failure at %v), maintaining sold_out", specName, lastFailure)
+			callback(interfaces.CapacityEvent{
+				SpecName:  specName,
+				Status:    interfaces.CapacitySoldOut,
+				Reason:    "nodeclaim:deleted_unready",
+				UpdatedAt: time.Now(),
+			})
+		}
+	}
 }
 
 func (p *KarpenterProvider) handleNodeClaim(ctx context.Context, obj *unstructured.Unstructured, callback func(interfaces.CapacityEvent)) {
@@ -323,13 +403,29 @@ func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.Capacity
 	// Collect status for all specs
 	specStatus := make(map[string]*interfaces.CapacityEvent)
 
-	// Initialize all specs as available
+	// Initialize specs: use failureCache to preserve recent failure status
+	// instead of blindly setting everything to available
+	p.failureCacheMu.RLock()
+	failureCacheCopy := make(map[string]time.Time, len(p.failureCache))
+	for k, v := range p.failureCache {
+		failureCacheCopy[k] = v
+	}
+	p.failureCacheMu.RUnlock()
+
 	for _, specName := range p.nodePoolToSpec {
-		specStatus[specName] = &interfaces.CapacityEvent{
+		event := &interfaces.CapacityEvent{
 			SpecName:  specName,
-			Status:    interfaces.CapacityAvailable,
 			UpdatedAt: time.Now(),
 		}
+		// If there's a recent failure (within 10 minutes), keep sold_out status
+		if lastFailure, ok := failureCacheCopy[specName]; ok && time.Since(lastFailure) < 10*time.Minute {
+			event.Status = interfaces.CapacitySoldOut
+			event.Reason = "nodeclaim:recent_failure"
+		} else {
+			event.Status = interfaces.CapacityAvailable
+			event.Reason = "default"
+		}
+		specStatus[specName] = event
 	}
 
 	// List all NodeClaims
@@ -364,15 +460,13 @@ func (p *KarpenterProvider) CheckAll(ctx context.Context) ([]interfaces.Capacity
 				message, _ := cond["message"].(string)
 
 				if status == "True" {
-					// Has success, mark as available
+					// Has success, mark as available and clear failure cache
 					specStatus[specName].Status = interfaces.CapacityAvailable
 					specStatus[specName].Reason = "nodeclaim"
 				} else if status == "False" && p.isCapacityError(reason, message) {
-					// Only mark as sold_out if not already successful
-					if specStatus[specName].Status != interfaces.CapacityAvailable {
-						specStatus[specName].Status = interfaces.CapacitySoldOut
-						specStatus[specName].Reason = "nodeclaim:" + reason
-					}
+					// Mark as sold_out (even if initialized as available)
+					specStatus[specName].Status = interfaces.CapacitySoldOut
+					specStatus[specName].Reason = "nodeclaim:" + reason
 				}
 			}
 		}

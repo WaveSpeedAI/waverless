@@ -473,3 +473,13 @@ func (r *WorkerRepository) ClearPendingPhase(ctx context.Context, podName string
 			"updated_at":          time.Now(),
 		}).Error
 }
+
+// GetWorkersInPendingPhase returns all active workers stuck in a specific pending phase.
+// It excludes OFFLINE workers since they are no longer running.
+func (r *WorkerRepository) GetWorkersInPendingPhase(ctx context.Context, phase string) ([]*model.Worker, error) {
+	var workers []*model.Worker
+	err := r.ds.DB(ctx).
+		Where("pending_phase = ? AND status != ?", phase, "OFFLINE").
+		Find(&workers).Error
+	return workers, err
+}

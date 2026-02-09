@@ -274,6 +274,15 @@ func (m *Manager) handleEvent(event interfaces.CapacityEvent) {
 		return
 	}
 
+	// Don't let CheckAll's default "available" events override spot_score status
+	// The "default" reason means CheckAll found no NodeClaims and defaulted to available,
+	// and "nodeclaim:recent_failure" means CheckAll preserved a failure from cache.
+	// Neither should override a spot_score determination.
+	if old.Reason == "spot_score" && (event.Reason == "default" || event.Reason == "nodeclaim:recent_failure") {
+		m.cacheMu.Unlock()
+		return
+	}
+
 	// For nodeclaim events, preserve the spot score
 	newEntry := cacheEntry{Status: event.Status, Reason: event.Reason, SpotScore: old.SpotScore}
 	m.cache[event.SpecName] = newEntry

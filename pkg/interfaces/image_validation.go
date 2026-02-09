@@ -22,6 +22,10 @@ const (
 	// This includes OutOfMemory, OutOfCpu errors
 	FailureTypeResourceLimit FailureType = "RESOURCE_LIMIT"
 
+	// FailureTypeNodeProvision indicates the worker failed because the node could not be provisioned
+	// This includes Spot capacity exhaustion, Karpenter InsufficientCapacity errors
+	FailureTypeNodeProvision FailureType = "NODE_PROVISION_FAILED"
+
 	// FailureTypeTimeout indicates the worker failed due to timeout
 	// This includes image pull timeout, startup timeout
 	FailureTypeTimeout FailureType = "TIMEOUT"
