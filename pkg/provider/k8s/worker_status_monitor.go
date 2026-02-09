@@ -337,12 +337,14 @@ func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName
 	// Get the current status from pod info
 	currentStatus := m.normalizeStatus(info.Phase, info.Status)
 
-	// Check if status has changed
-	m.cacheMu.RLock()
+	// Use a single Lock for check-then-update to prevent duplicate events
+	m.cacheMu.Lock()
 	oldStatus, hasOldStatus := m.workerStatusCache[podName]
-	m.cacheMu.RUnlock()
-
 	statusChanged := !hasOldStatus || oldStatus != currentStatus
+	if statusChanged {
+		m.workerStatusCache[podName] = currentStatus
+	}
+	m.cacheMu.Unlock()
 
 	// Record status change event if status changed
 	if statusChanged && m.statusEventRecorder != nil {
@@ -356,11 +358,6 @@ func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName
 		} else {
 			logger.DebugCtx(ctx, "Recorded status change event for worker %s: %s -> %s", podName, oldStatusStr, currentStatus)
 		}
-
-		// Update status cache
-		m.cacheMu.Lock()
-		m.workerStatusCache[podName] = currentStatus
-		m.cacheMu.Unlock()
 	}
 
 	// Handle pending phase detection and recording
@@ -375,6 +372,7 @@ func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName
 }
 
 // handlePendingPhaseChange detects and records pending phase changes.
+// Uses a single Lock to prevent duplicate events from concurrent goroutines.
 // Validates: Requirements 1.4, 3.1
 func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, podName, endpoint string, info *interfaces.PodInfo, podConditions []interfaces.PodCondition) {
 	// Detect the current pending phase
@@ -385,12 +383,15 @@ func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, p
 
 	currentPhase := phaseInfo.Phase
 
-	// Check if phase has changed
-	m.cacheMu.RLock()
+	// Use a single Lock for check-then-update to prevent duplicate events
+	// from concurrent goroutines (notifyPodStatusChange fans out in goroutines)
+	m.cacheMu.Lock()
 	oldPhase, hasOldPhase := m.workerPhaseCache[podName]
-	m.cacheMu.RUnlock()
-
 	phaseChanged := !hasOldPhase || oldPhase != currentPhase
+	if phaseChanged {
+		m.workerPhaseCache[podName] = currentPhase
+	}
+	m.cacheMu.Unlock()
 
 	// Record phase change event if phase changed
 	if phaseChanged && m.statusEventRecorder != nil {
@@ -399,11 +400,6 @@ func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, p
 		} else {
 			logger.DebugCtx(ctx, "Recorded phase change event for worker %s: %s -> %s", podName, oldPhase, currentPhase)
 		}
-
-		// Update phase cache
-		m.cacheMu.Lock()
-		m.workerPhaseCache[podName] = currentPhase
-		m.cacheMu.Unlock()
 	}
 }
 

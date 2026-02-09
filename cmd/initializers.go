@@ -552,6 +552,8 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 	// pending_reason/pending_message on all workers waiting for that spec's node, and
 	// record a status_event so the timeline reflects the real failure reason.
 	app.capacityMgr.OnChange(func(event interfaces.CapacityEvent) {
+		logger.InfoCtx(app.ctx, "Capacity OnChange callback: spec=%s, status=%s, reason=%s",
+			event.SpecName, event.Status, event.Reason)
 		if event.Status != interfaces.CapacitySoldOut {
 			return
 		}
@@ -633,6 +635,9 @@ func (app *Application) propagateCapacityFailureToWorkers(event interfaces.Capac
 	ctx := app.ctx
 	specName := event.SpecName
 
+	logger.InfoCtx(ctx, "propagateCapacityFailure: triggered for spec=%s, status=%s, reason=%s",
+		specName, event.Status, event.Reason)
+
 	// Find all endpoints using this spec
 	endpoints, err := app.mysqlRepo.Endpoint.GetBySpecName(ctx, specName)
 	if err != nil {
@@ -640,6 +645,7 @@ func (app *Application) propagateCapacityFailureToWorkers(event interfaces.Capac
 		return
 	}
 	if len(endpoints) == 0 {
+		logger.InfoCtx(ctx, "propagateCapacityFailure: no endpoints found for spec %s", specName)
 		return
 	}
 
@@ -655,6 +661,7 @@ func (app *Application) propagateCapacityFailureToWorkers(event interfaces.Capac
 		return
 	}
 	if len(workers) == 0 {
+		logger.InfoCtx(ctx, "propagateCapacityFailure: no WAITING_NODE workers found for endpoints %v (spec %s)", endpointNames, specName)
 		return
 	}
 

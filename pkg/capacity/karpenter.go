@@ -315,6 +315,7 @@ func (p *KarpenterProvider) isCapacityError(reason, message string) bool {
 	capacityErrors := []string{
 		"InsufficientInstanceCapacity",
 		"InsufficientCapacity",
+		"UnfulfillableCapacity",
 		"Unsupported",
 		"MaxSpotInstanceCountExceeded",
 	}
