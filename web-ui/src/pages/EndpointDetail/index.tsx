@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons';
 import * as echarts from 'echarts';
 import { api } from '@/api/client';
-import { AppInfo, WorkerWithPodInfo, UpdateEndpointConfigRequest, UpdateDeploymentRequest, SpecInfo, PVCInfo, Task, EndpointStatusSummary as StatusSummaryType } from '@/types';
+import { AppInfo, WorkerWithPodInfo, UpdateEndpointConfigRequest, UpdateDeploymentRequest, SpecInfo, PVCInfo, Task } from '@/types';
 import { EndpointStatusSummary } from '@/components/EndpointStatusSummary';
 import { StatusTimeline } from '@/components/StatusTimeline';
 

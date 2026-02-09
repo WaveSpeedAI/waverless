@@ -7,7 +7,7 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
 } from '@ant-design/icons';
-import type { EndpointStatusSummary as StatusSummaryType, WorkerPendingDetail, WorkerFailureDetail, PendingPhase } from '@/types';
+import type { EndpointStatusSummary as StatusSummaryType, PendingPhase } from '@/types';
 import { SpotCapacityIndicator } from './SpotCapacityIndicator';
 
 const { Text } = Typography;
@@ -16,16 +16,6 @@ interface EndpointStatusSummaryProps {
   summary: StatusSummaryType | null | undefined;
   loading?: boolean;
 }
-
-// Status color mapping
-const statusColors: Record<string, string> = {
-  ONLINE: 'success',
-  PENDING: 'processing',
-  STARTING: 'processing',
-  FAILED: 'error',
-  OFFLINE: 'default',
-  DRAINING: 'warning',
-};
 
 // Pending phase display config
 const phaseConfig: Record<PendingPhase, { color: string; icon: React.ReactNode; label: string }> = {
@@ -159,7 +149,6 @@ export const EndpointStatusSummary: React.FC<EndpointStatusSummaryProps> = ({
   const onlineCount = workersByStatus?.ONLINE || 0;
   const pendingCount = (workersByStatus?.PENDING || 0) + (workersByStatus?.STARTING || 0);
   const failedCount = workersByStatus?.FAILED || 0;
-  const offlineCount = workersByStatus?.OFFLINE || 0;
 
   return (
     <Card title="Status Summary" loading={loading}>
