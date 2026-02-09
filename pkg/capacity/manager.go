@@ -271,6 +271,13 @@ func (m *Manager) handleEvent(event interfaces.CapacityEvent) {
 		m.cacheMu.Unlock()
 		logger.InfoCtx(ctx, "Ignoring nodeclaim event for %s: spot_score=%d is too low, keeping status=%s",
 			event.SpecName, old.SpotScore, old.Status)
+		// Even though we don't update cache/DB, still fire callbacks for sold_out nodeclaim events
+		// so that WAITING_NODE workers get updated with the real failure reason
+		if event.Status == interfaces.CapacitySoldOut {
+			for _, cb := range m.callbacks {
+				cb(event)
+			}
+		}
 		return
 	}
 
