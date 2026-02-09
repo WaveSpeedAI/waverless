@@ -21,7 +21,6 @@ import (
 // Unlike K8s which uses informers/webhooks, Novita doesn't support webhooks,
 // so this monitor uses a polling mechanism to detect status changes.
 //
-// Validates: Requirements 3.1, 3.2, 3.3
 type NovitaWorkerStatusMonitor struct {
 	client       clientInterface
 	workerRepo   *mysql.WorkerRepository
@@ -99,7 +98,6 @@ func NewNovitaWorkerStatusMonitorWithInterval(client clientInterface, workerRepo
 // Returns:
 //   - error if polling fails, nil when context is cancelled
 //
-// Validates: Requirements 3.1, 3.2, 3.3
 func (m *NovitaWorkerStatusMonitor) WatchWorkerStatus(ctx context.Context, callback interfaces.WorkerStatusCallback) error {
 	if callback == nil {
 		return nil
@@ -336,7 +334,6 @@ func (m *NovitaWorkerStatusMonitor) createFailureInfo(failureType interfaces.Fai
 // Returns:
 //   - The corresponding FailureType
 //
-// Validates: Requirements 3.2, 6.2
 func (m *NovitaWorkerStatusMonitor) ClassifyNovitaFailure(state, errorCode, message string) interfaces.FailureType {
 	// Normalize for comparison
 	stateLower := strings.ToLower(state)
@@ -406,7 +403,6 @@ func containsAny(s string, substrs ...string) bool {
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 3.3, 3.4
 func (m *NovitaWorkerStatusMonitor) updateWorkerFailure(ctx context.Context, workerID, endpoint string, info *interfaces.WorkerFailureInfo) error {
 	if m.workerRepo == nil || info == nil {
 		return nil

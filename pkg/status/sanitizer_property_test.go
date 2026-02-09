@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 package status
 
 import (
@@ -25,7 +24,6 @@ import (
 // the actionable meaning.
 //
 // Feature: image-validation-and-status, Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 func TestProperty_StatusSanitizationRemovesSensitiveInfo(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -162,7 +160,6 @@ func TestProperty_StatusSanitizationRemovesSensitiveInfo(t *testing.T) {
 // (error type indicators, general context) while removing sensitive details.
 //
 // Feature: image-validation-and-status, Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 func TestProperty_SanitizationPreservesActionableMeaning(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -224,7 +221,6 @@ func TestProperty_SanitizationPreservesActionableMeaning(t *testing.T) {
 // user-friendly message with non-empty UserMessage, Suggestion, and ErrorCode.
 //
 // Feature: image-validation-and-status, Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 func TestProperty_ErrorMappingsProduceUserFriendlyMessages(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -303,7 +299,6 @@ func TestProperty_ErrorMappingsProduceUserFriendlyMessages(t *testing.T) {
 // ALL sensitive items SHALL be removed from the output.
 //
 // Feature: image-validation-and-status, Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 func TestProperty_ComplexMessagesSanitization(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -365,7 +360,6 @@ func TestProperty_ComplexMessagesSanitization(t *testing.T) {
 // and produce a user-friendly SanitizedMsg.
 //
 // Feature: image-validation-and-status, Property 5: Status sanitization and information hiding
-// **Validates: Requirements 4.1, 4.3**
 func TestProperty_SanitizeWorkerFailureInfoIntegration(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

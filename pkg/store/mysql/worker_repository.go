@@ -334,7 +334,6 @@ func (r *WorkerRepository) Delete(ctx context.Context, workerID string) error {
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 3.3, 3.4, 6.1, 6.2
 func (r *WorkerRepository) UpdateWorkerFailure(ctx context.Context, podName, failureType, failureReason, failureDetails string, occurredAt time.Time) error {
 	logger.InfoCtx(ctx, "UpdateWorkerFailure: attempting to update pod_name=%s, type=%s, reason=%s", podName, failureType, failureReason)
 
@@ -431,5 +430,69 @@ func (r *WorkerRepository) GetWorkersWithFailure(ctx context.Context, endpoint s
 func (r *WorkerRepository) GetWorkersByFailureType(ctx context.Context, failureType string) ([]*model.Worker, error) {
 	var workers []*model.Worker
 	err := r.ds.DB(ctx).Where("failure_type = ? AND status != ?", failureType, "OFFLINE").Find(&workers).Error
+	return workers, err
+}
+
+// UpdateSpotPrice records the Spot instance price and type on a worker.
+// This is called once at worker creation time to snapshot the cost for billing.
+func (r *WorkerRepository) UpdateSpotPrice(ctx context.Context, podName string, price float64, instanceType string) error {
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"spot_price":         price,
+			"spot_instance_type": instanceType,
+		}).Error
+}
+
+// UpdatePendingPhase updates the pending phase information for a worker.
+// This is called when the PendingPhaseDetector detects a phase change during pod watching.
+func (r *WorkerRepository) UpdatePendingPhase(ctx context.Context, podName, phase, reason, message string) error {
+	now := time.Now()
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"pending_phase":       phase,
+			"pending_phase_since": now,
+			"pending_reason":      reason,
+			"pending_message":     message,
+			"updated_at":          now,
+		}).Error
+}
+
+// ClearPendingPhase clears the pending phase information for a worker.
+// This is called when a worker transitions out of pending state (e.g., becomes Running).
+func (r *WorkerRepository) ClearPendingPhase(ctx context.Context, podName string) error {
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"pending_phase":       nil,
+			"pending_phase_since": nil,
+			"pending_reason":      nil,
+			"pending_message":     nil,
+			"updated_at":          time.Now(),
+		}).Error
+}
+
+// GetWorkersInPendingPhase returns all active workers stuck in a specific pending phase.
+// It excludes OFFLINE workers since they are no longer running.
+func (r *WorkerRepository) GetWorkersInPendingPhase(ctx context.Context, phase string) ([]*model.Worker, error) {
+	var workers []*model.Worker
+	err := r.ds.DB(ctx).
+		Where("pending_phase = ? AND status != ?", phase, "OFFLINE").
+		Find(&workers).Error
+	return workers, err
+}
+
+// GetWorkersInPendingPhaseByEndpoints returns all active workers in a specific pending phase
+// for the given list of endpoints. This is used to propagate capacity failure information
+// (e.g. NodeClaim InsufficientCapacity) to workers waiting for node provisioning.
+func (r *WorkerRepository) GetWorkersInPendingPhaseByEndpoints(ctx context.Context, phase string, endpoints []string) ([]*model.Worker, error) {
+	if len(endpoints) == 0 {
+		return nil, nil
+	}
+	var workers []*model.Worker
+	err := r.ds.DB(ctx).
+		Where("pending_phase = ? AND status != ? AND endpoint IN ?", phase, "OFFLINE", endpoints).
+		Find(&workers).Error
 	return workers, err
 }

@@ -39,7 +39,6 @@ type sensitivePattern struct {
 
 // ImagePullErrorMappings contains default mappings for IMAGE_PULL_FAILED type.
 // These mappings cover both K8s and Novita specific error reasons.
-// Validates: Requirements 4.1, 4.2
 var ImagePullErrorMappings = map[string]SanitizedError{
 	// K8s specific errors
 	"ImagePullBackOff": {
@@ -207,6 +206,31 @@ var TimeoutErrorMappings = map[string]SanitizedError{
 	},
 }
 
+// NodeProvisionErrorMappings contains default mappings for NODE_PROVISION_FAILED type.
+var NodeProvisionErrorMappings = map[string]SanitizedError{
+	"UnfulfillableCapacity": {
+		UserMessage: "GPU node provisioning failed due to capacity exhaustion",
+		Suggestion:  "Current GPU spec capacity is insufficient, please try again later or select a different GPU spec",
+		ErrorCode:   "NODE_UNFULFILLABLE",
+	},
+	"InsufficientCapacity": {
+		UserMessage: "Insufficient capacity to provision GPU node",
+		Suggestion:  "The cloud provider cannot fulfill the request right now. Please try again later",
+		ErrorCode:   "NODE_INSUFFICIENT",
+	},
+	"NodeProvisionTimeout": {
+		UserMessage: "Node provisioning timed out",
+		Suggestion:  "The system waited too long for a GPU node to become available. Please try again later or choose a different GPU spec",
+		ErrorCode:   "NODE_TIMEOUT",
+	},
+	// Generic fallback
+	"default": {
+		UserMessage: "GPU node provisioning failed",
+		Suggestion:  "Please try again later or select a different GPU spec",
+		ErrorCode:   "NODE_PROVISION_FAIL",
+	},
+}
+
 // UnknownErrorMappings contains default mappings for UNKNOWN type.
 var UnknownErrorMappings = map[string]SanitizedError{
 	"default": {
@@ -228,6 +252,7 @@ func NewStatusSanitizer() *StatusSanitizer {
 	s.errorMappings[interfaces.FailureTypeContainerCrash] = ContainerCrashErrorMappings
 	s.errorMappings[interfaces.FailureTypeResourceLimit] = ResourceLimitErrorMappings
 	s.errorMappings[interfaces.FailureTypeTimeout] = TimeoutErrorMappings
+	s.errorMappings[interfaces.FailureTypeNodeProvision] = NodeProvisionErrorMappings
 	s.errorMappings[interfaces.FailureTypeUnknown] = UnknownErrorMappings
 
 	return s
@@ -235,7 +260,6 @@ func NewStatusSanitizer() *StatusSanitizer {
 
 // buildDefaultSensitivePatterns builds the default patterns for sensitive information.
 // These patterns are used to identify and redact sensitive information from error messages.
-// Validates: Requirement 4.3
 func buildDefaultSensitivePatterns() []*sensitivePattern {
 	return []*sensitivePattern{
 		// Node names - typically in format: node-xxx, ip-xxx-xxx-xxx-xxx, gke-xxx-xxx
@@ -387,7 +411,6 @@ func buildDefaultSensitivePatterns() []*sensitivePattern {
 // Returns:
 //   - A SanitizedError with user-friendly message and suggestion
 //
-// Validates: Requirements 4.1, 4.2
 func (s *StatusSanitizer) Sanitize(failureType interfaces.FailureType, reason, message string) *SanitizedError {
 	// Get mappings for this failure type
 	mappings, ok := s.errorMappings[failureType]
@@ -455,7 +478,6 @@ func (s *StatusSanitizer) Sanitize(failureType interfaces.FailureType, reason, m
 // Returns:
 //   - The sanitized message with sensitive information redacted
 //
-// Validates: Requirement 4.3
 func (s *StatusSanitizer) SanitizeSensitiveInfo(message string) string {
 	if message == "" {
 		return message

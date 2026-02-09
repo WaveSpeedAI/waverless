@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 package resource
 
 import (
@@ -228,7 +227,6 @@ func (m *mockDeployProviderForPBT) Reset() {
 // the Resource_Releaser SHALL terminate the Pod and record the termination reason as "IMAGE_PULL_TIMEOUT".
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_ImagePullTimeoutTermination(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -320,7 +318,6 @@ func TestProperty_ImagePullTimeoutTermination(t *testing.T) {
 // SHALL record the termination reason as "IMAGE_PULL_TIMEOUT".
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_TerminationReasonRecorded(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -407,7 +404,6 @@ func findSubstring(s, substr string) bool {
 // timeout SHALL NOT be terminated.
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_WorkersWithinTimeoutNotTerminated(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -468,7 +464,6 @@ func TestProperty_WorkersWithinTimeoutNotTerminated(t *testing.T) {
 // current check time. Subsequent checks should use the same first failure time.
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_TimeoutCalculationCorrectness(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -542,7 +537,6 @@ func TestProperty_TimeoutCalculationCorrectness(t *testing.T) {
 // IMAGE_PULL_FAILED failure type, not other failure types.
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_OnlyImagePullFailuresAreTracked(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -580,7 +574,6 @@ func TestProperty_OnlyImagePullFailuresAreTracked(t *testing.T) {
 // MaxRetries times.
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_RetryCountRespected(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -639,7 +632,6 @@ func TestProperty_RetryCountRespected(t *testing.T) {
 // SHALL be updated from IMAGE_PULL_FAILED to TIMEOUT.
 //
 // Feature: image-validation-and-status, Property 6: Image pull timeout termination
-// **Validates: Requirements 5.2, 5.3**
 func TestProperty_FailureTypeUpdatedToTimeout(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -766,7 +758,6 @@ func deriveHealthStatus(totalWorkers, failedWorkers int) model.HealthStatus {
 // - If F = N (all failed), health_status SHALL be "UNHEALTHY"
 //
 // Feature: image-validation-and-status, Property 7: Endpoint health status derivation
-// **Validates: Requirements 5.4, 6.4**
 func TestProperty_EndpointHealthStatusDerivation(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -912,7 +903,6 @@ func TestProperty_EndpointHealthStatusDerivation(t *testing.T) {
 // calculation SHALL always produce the same result.
 //
 // Feature: image-validation-and-status, Property 7: Endpoint health status derivation
-// **Validates: Requirements 5.4, 6.4**
 func TestProperty_HealthStatusCalculationDeterministic(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -992,7 +982,6 @@ func TestProperty_HealthStatusCalculationDeterministic(t *testing.T) {
 // - N of N workers failed → UNHEALTHY
 //
 // Feature: image-validation-and-status, Property 7: Endpoint health status derivation
-// **Validates: Requirements 5.4, 6.4**
 func TestProperty_HealthStatusBoundaryConditions(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1085,7 +1074,6 @@ func TestProperty_HealthStatusBoundaryConditions(t *testing.T) {
 // not just IMAGE_PULL_FAILED.
 //
 // Feature: image-validation-and-status, Property 7: Endpoint health status derivation
-// **Validates: Requirements 5.4, 6.4**
 func TestProperty_HealthStatusWithDifferentFailureTypes(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1149,7 +1137,6 @@ func TestProperty_HealthStatusWithDifferentFailureTypes(t *testing.T) {
 // - UNHEALTHY → DEGRADED (when some failures are resolved)
 //
 // Feature: image-validation-and-status, Property 7: Endpoint health status derivation
-// **Validates: Requirements 5.4, 6.4**
 func TestProperty_HealthStatusTransitions(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1335,7 +1322,6 @@ func isImageRelatedFailureForPBT(healthMessage string) bool {
 // the system SHALL NOT create new Pods until the user updates the image configuration.
 //
 // Feature: image-validation-and-status, Property 8: Failed endpoint prevents new pods
-// **Validates: Requirements 5.5**
 func TestProperty_FailedEndpointPreventsNewPods(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1478,7 +1464,6 @@ func TestProperty_FailedEndpointPreventsNewPods(t *testing.T) {
 // keywords in both Chinese and English.
 //
 // Feature: image-validation-and-status, Property 8: Failed endpoint prevents new pods
-// **Validates: Requirements 5.5**
 func TestProperty_ImageRelatedMessageDetection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1545,7 +1530,6 @@ func TestProperty_ImageRelatedMessageDetection(t *testing.T) {
 // should always produce the same blocking decision.
 //
 // Feature: image-validation-and-status, Property 8: Failed endpoint prevents new pods
-// **Validates: Requirements 5.5**
 func TestProperty_BlockingLogicConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -1638,7 +1622,6 @@ func TestProperty_BlockingLogicConsistency(t *testing.T) {
 // as this is the mechanism for users to fix the issue.
 //
 // Feature: image-validation-and-status, Property 8: Failed endpoint prevents new pods
-// **Validates: Requirements 5.5**
 func TestProperty_ImageUpdateAllowedWhenUnhealthy(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

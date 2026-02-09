@@ -32,6 +32,16 @@ type Worker struct {
 	FailureReason     string     `gorm:"column:failure_reason"`            // Sanitized user-friendly message
 	FailureDetails    string     `gorm:"column:failure_details;type:text"` // JSON with full details for debugging
 	FailureOccurredAt *time.Time `gorm:"column:failure_occurred_at"`       // Timestamp when failure was detected
+
+	// Pending phase tracking fields for detailed status visibility
+	PendingPhase      *string    `gorm:"column:pending_phase;type:varchar(32)" json:"pendingPhase,omitempty"`            // SCHEDULING, WAITING_NODE, PULLING_IMAGE, INITIALIZING
+	PendingPhaseSince *time.Time `gorm:"column:pending_phase_since;type:datetime(3)" json:"pendingPhaseSince,omitempty"` // Timestamp when current pending phase started
+	PendingReason     *string    `gorm:"column:pending_reason;type:varchar(255)" json:"pendingReason,omitempty"`         // Reason for pending state
+	PendingMessage    *string    `gorm:"column:pending_message;type:text" json:"pendingMessage,omitempty"`               // Detailed message about pending state
+
+	// Spot instance cost tracking fields
+	SpotPrice        *float64 `gorm:"column:spot_price;type:decimal(10,6)" json:"spotPrice,omitempty"`              // Spot price (USD/hour) at worker creation time
+	SpotInstanceType *string  `gorm:"column:spot_instance_type;type:varchar(64)" json:"spotInstanceType,omitempty"` // Spot instance type (e.g., "g4dn.xlarge")
 }
 
 func (Worker) TableName() string {

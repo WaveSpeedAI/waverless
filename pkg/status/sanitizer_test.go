@@ -26,7 +26,6 @@ func TestNewStatusSanitizer(t *testing.T) {
 }
 
 // TestSanitize_ImagePullErrors tests sanitization of image pull errors.
-// Validates: Requirements 4.1, 4.2
 func TestSanitize_ImagePullErrors(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -100,7 +99,6 @@ func TestSanitize_ImagePullErrors(t *testing.T) {
 }
 
 // TestSanitize_ContainerCrashErrors tests sanitization of container crash errors.
-// Validates: Requirements 4.1
 func TestSanitize_ContainerCrashErrors(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -141,7 +139,6 @@ func TestSanitize_ContainerCrashErrors(t *testing.T) {
 }
 
 // TestSanitize_ResourceLimitErrors tests sanitization of resource limit errors.
-// Validates: Requirements 4.1
 func TestSanitize_ResourceLimitErrors(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -182,7 +179,6 @@ func TestSanitize_ResourceLimitErrors(t *testing.T) {
 }
 
 // TestSanitize_TimeoutErrors tests sanitization of timeout errors.
-// Validates: Requirements 4.1
 func TestSanitize_TimeoutErrors(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -270,7 +266,6 @@ func TestSanitize_MessageMatch(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_NodeNames tests removal of node names.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_NodeNames(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -325,7 +320,6 @@ func TestSanitizeSensitiveInfo_NodeNames(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_Namespaces tests removal of namespace names.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_Namespaces(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -360,7 +354,6 @@ func TestSanitizeSensitiveInfo_Namespaces(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_InternalIPs tests removal of internal IP addresses.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_InternalIPs(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -410,7 +403,6 @@ func TestSanitizeSensitiveInfo_InternalIPs(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_PodNames tests removal of pod names.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_PodNames(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -440,7 +432,6 @@ func TestSanitizeSensitiveInfo_PodNames(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_Secrets tests removal of secret references.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_Secrets(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -475,7 +466,6 @@ func TestSanitizeSensitiveInfo_Secrets(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_CloudProviderIDs tests removal of cloud provider identifiers.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_CloudProviderIDs(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -538,7 +528,6 @@ func TestSanitizeSensitiveInfo_NoSensitiveInfo(t *testing.T) {
 }
 
 // TestSanitizeSensitiveInfo_ComplexMessage tests sanitization of complex messages with multiple sensitive items.
-// Validates: Requirement 4.3
 func TestSanitizeSensitiveInfo_ComplexMessage(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 
@@ -668,7 +657,6 @@ func TestDefaultErrorMappings(t *testing.T) {
 }
 
 // TestSanitize_RequirementMapping tests the specific mappings required by Requirement 4.2.
-// Validates: Requirement 4.2
 func TestSanitize_RequirementMapping(t *testing.T) {
 	sanitizer := NewStatusSanitizer()
 

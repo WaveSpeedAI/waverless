@@ -19,6 +19,11 @@ func (r *Router) setupAdminRoutes(engine *gin.Engine) {
 		// Worker detail API (query by database ID, no status filter)
 		api.GET("/workers/:id", r.workerHandler.GetWorkerByID)
 
+		// Worker status events (Requirements 3.4, 3.5)
+		if r.statusEventHandler != nil {
+			api.GET("/workers/:id/status-events", r.statusEventHandler.GetWorkerStatusEvents)
+		}
+
 		// Register feature module routes
 		r.setupEndpointRoutes(api)
 		r.setupTaskRoutes(api)
@@ -51,6 +56,11 @@ func (r *Router) setupEndpointRoutes(api *gin.RouterGroup) {
 		endpoints.GET("/:name/workers/:pod_name/describe", r.workerHandler.DescribeWorker) // Describe worker
 		endpoints.GET("/:name/workers/:pod_name/yaml", r.workerHandler.GetWorkerYAML)      // Get worker YAML
 		endpoints.GET("/:name/workers/exec", r.endpointHandler.ExecWorker)                 // Worker Exec (WebSocket)
+
+		// Status events (Requirements 3.4, 3.5)
+		if r.statusEventHandler != nil {
+			endpoints.GET("/:name/status-events", r.statusEventHandler.ListStatusEvents) // List status events for endpoint
+		}
 
 		// Image update check
 		if r.imageHandler != nil {

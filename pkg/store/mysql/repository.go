@@ -16,6 +16,7 @@ type Repository struct {
 	SpecCapacity     *SpecCapacityRepository
 	Worker           *WorkerRepository
 	Monitoring       *MonitoringRepository
+	StatusEvent      *StatusEventRepository
 }
 
 // NewRepository creates a new MySQL repository with all sub-repositories
@@ -37,6 +38,7 @@ func NewRepository(dsn string, proxyConfig *config.ProxyConfig) (*Repository, er
 		SpecCapacity:     NewSpecCapacityRepository(ds),
 		Worker:           NewWorkerRepository(ds),
 		Monitoring:       NewMonitoringRepository(ds),
+		StatusEvent:      NewStatusEventRepository(ds),
 	}, nil
 }
 

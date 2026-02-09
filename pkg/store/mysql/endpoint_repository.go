@@ -160,7 +160,6 @@ func (r *EndpointRepository) GetBySpecName(ctx context.Context, specName string)
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 5.4, 6.3, 6.4
 func (r *EndpointRepository) UpdateHealthStatus(ctx context.Context, endpointName, healthStatus, healthMessage string) error {
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -217,7 +216,6 @@ func (r *EndpointRepository) GetByHealthStatus(ctx context.Context, healthStatus
 //   - reason: the reason for blocking (empty if not blocked)
 //   - error: if the database query fails
 //
-// Validates: Requirements 5.5
 func (r *EndpointRepository) IsBlockedDueToImageFailure(ctx context.Context, endpointName string) (blocked bool, reason string, err error) {
 	endpoint, err := r.Get(ctx, endpointName)
 	if err != nil {
@@ -271,4 +269,28 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// UpdateStatusSummary updates the status_summary JSON field for an endpoint.
+// This method is called when any Worker status changes to update the aggregated status.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - endpointName: The name of the endpoint to update
+//   - statusSummary: The computed status summary as a map (will be stored as JSON)
+//
+// Returns:
+//   - error if the database update fails
+//
+func (r *EndpointRepository) UpdateStatusSummary(ctx context.Context, endpointName string, statusSummary map[string]any) error {
+	now := time.Now()
+	updates := map[string]any{
+		"status_summary":         JSONMap(statusSummary),
+		"last_status_summary_at": now,
+		"updated_at":             gorm.Expr("CURRENT_TIMESTAMP(3)"),
+	}
+
+	return r.ds.DB(ctx).Model(&Endpoint{}).
+		Where("endpoint = ?", endpointName).
+		Updates(updates).Error
 }

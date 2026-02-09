@@ -15,7 +15,6 @@ import (
 )
 
 // TestValidateImageFormat_ValidFormats tests that valid image formats are accepted.
-// Validates: Requirements 1.1, 1.3
 func TestValidateImageFormat_ValidFormats(t *testing.T) {
 	validator := NewImageValidator(nil)
 
@@ -84,7 +83,6 @@ func TestValidateImageFormat_ValidFormats(t *testing.T) {
 }
 
 // TestValidateImageFormat_InvalidFormats tests that invalid image formats are rejected.
-// Validates: Requirements 1.1, 1.2
 func TestValidateImageFormat_InvalidFormats(t *testing.T) {
 	validator := NewImageValidator(nil)
 
@@ -142,7 +140,6 @@ func TestValidateImageFormat_InvalidFormats(t *testing.T) {
 }
 
 // TestValidateImageFormat_ErrorMessages tests that error messages are descriptive and in English.
-// Validates: Requirement 1.2
 func TestValidateImageFormat_ErrorMessages(t *testing.T) {
 	validator := NewImageValidator(nil)
 
@@ -202,7 +199,6 @@ func TestDefaultImageValidationConfig(t *testing.T) {
 }
 
 // TestCheckImageExists_InvalidFormat tests that invalid image formats return validation errors.
-// Validates: Requirements 2.1
 func TestCheckImageExists_InvalidFormat(t *testing.T) {
 	validator := NewImageValidator(nil)
 	ctx := context.Background()
@@ -228,7 +224,6 @@ func TestCheckImageExists_InvalidFormat(t *testing.T) {
 }
 
 // TestCheckImageExists_CacheHit tests that cached results are returned without making HTTP requests.
-// Validates: Requirements 2.5
 func TestCheckImageExists_CacheHit(t *testing.T) {
 	validator := NewImageValidator(nil)
 	ctx := context.Background()

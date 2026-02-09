@@ -8,6 +8,7 @@ import (
 
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	"waverless/pkg/status"
 )
 
 // K8sLifecycleCallbacks defines K8s lifecycle callback functions
@@ -25,6 +26,18 @@ type K8sLifecycleCallbacks struct {
 	OnEndpointStatusChange func(endpoint, status string, desiredReplicas, readyReplicas, availableReplicas int)
 	// Deployment change callback
 	OnDeploymentChange func(endpoint string)
+
+	// StatusEventRecorder for recording status events (optional).
+	// If set, status change, phase change, and failure events will be recorded.
+	StatusEventRecorder StatusEventRecorder
+
+	// PendingPhaseDetector for detecting pending phases (optional).
+	// If set, pending phase changes will be detected and recorded.
+	PendingPhaseDetector *status.PendingPhaseDetector
+
+	// OnPendingPhaseUpdate is called when a pending phase is detected or cleared.
+	// Parameters: podName, endpoint, phase (empty string to clear), reason, message
+	OnPendingPhaseUpdate func(podName, endpoint, phase, reason, message string)
 }
 
 // K8sProviderLifecycle manages K8s provider lifecycle
@@ -93,7 +106,7 @@ func (l *K8sProviderLifecycle) RegisterWatchers(callbacks *K8sLifecycleCallbacks
 	}
 
 	l.started = true
-	logger.InfoCtx(l.ctx, "✅ K8s lifecycle watchers registered successfully")
+	logger.InfoCtx(l.ctx, "K8s lifecycle watchers registered successfully")
 	return nil
 }
 
@@ -116,22 +129,63 @@ func (l *K8sProviderLifecycle) StopWatchers() error {
 }
 
 // registerPodStatusWatcher registers pod status change watcher
+// This method integrates with StatusEventService to record status changes,
+// phase changes, and failure events.
 func (l *K8sProviderLifecycle) registerPodStatusWatcher() error {
 	if l.callbacks == nil || l.callbacks.OnWorkerStatusChange == nil {
 		return nil
 	}
 
-	// Create failure detector
+	// Create failure detector with optional status event recorder and pending phase detector
 	failureDetector := NewK8sWorkerStatusMonitor(l.provider.GetManager(), nil)
+
+	// Configure status event recorder if available
+	if l.callbacks.StatusEventRecorder != nil {
+		failureDetector.WithStatusEventRecorder(l.callbacks.StatusEventRecorder)
+	}
+
+	// Configure pending phase detector if available
+	if l.callbacks.PendingPhaseDetector != nil {
+		failureDetector.WithPendingPhaseDetector(l.callbacks.PendingPhaseDetector)
+	}
 
 	return l.provider.WatchPodStatusChange(l.ctx, func(podName, endpoint string, info *interfaces.PodInfo) {
 		// 1. Trigger status change callback
 		l.callbacks.OnWorkerStatusChange(podName, endpoint, info)
 
-		// 2. Detect failure and trigger failure callback
+		// 2. Record status change and phase change events if recorder is configured
+		// This handles both status changes and pending phase changes
+		if l.callbacks.StatusEventRecorder != nil {
+			// Get pod conditions for pending phase detection
+			var podConditions []interfaces.PodCondition
+			if podDetail, err := l.provider.GetManager().DescribePod(l.ctx, endpoint, podName); err == nil && podDetail != nil {
+				podConditions = podDetail.Conditions
+			}
+			failureDetector.HandleStatusChange(l.ctx, podName, endpoint, info, podConditions)
+
+			// 2b. Update pending phase in workers table
+			if l.callbacks.OnPendingPhaseUpdate != nil && l.callbacks.PendingPhaseDetector != nil {
+				if info != nil && info.Phase == "Pending" {
+					phaseInfo := l.callbacks.PendingPhaseDetector.DetectPhase(info, podConditions)
+					if phaseInfo != nil {
+						l.callbacks.OnPendingPhaseUpdate(podName, endpoint, string(phaseInfo.Phase), phaseInfo.Reason, phaseInfo.Message)
+					}
+				} else {
+					// Pod is no longer pending, clear pending phase
+					l.callbacks.OnPendingPhaseUpdate(podName, endpoint, "", "", "")
+				}
+			}
+		}
+
+		// 3. Detect failure and trigger failure callback
 		if l.callbacks.OnWorkerFailure != nil {
 			if failureInfo := failureDetector.DetectFailure(info); failureInfo != nil {
 				l.callbacks.OnWorkerFailure(podName, endpoint, failureInfo)
+
+				// 4. Record failure event if recorder is configured
+				if l.callbacks.StatusEventRecorder != nil {
+					failureDetector.HandleFailure(l.ctx, podName, endpoint, failureInfo)
+				}
 			}
 		}
 	})

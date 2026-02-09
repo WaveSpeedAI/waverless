@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.1, 3.2, 3.3**
 package k8s
 
 import (
@@ -24,7 +23,6 @@ import (
 // identify ImagePullBackOff/ErrImagePull states as image-related failures.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.1, 3.2, 3.3**
 func TestProperty_PodStatusTrackingCompleteness(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -83,7 +81,6 @@ func TestProperty_PodStatusTrackingCompleteness(t *testing.T) {
 // all required fields populated: Type, Reason, Message, and OccurredAt timestamp.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.1, 3.2, 3.3**
 func TestProperty_DetectFailureRecordsAllRequiredFields(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -173,7 +170,6 @@ func TestProperty_DetectFailureRecordsAllRequiredFields(t *testing.T) {
 // detectFailure SHALL return a WorkerFailureInfo with Type = IMAGE_PULL_FAILED.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.2, 3.3**
 func TestProperty_ImagePullFailureDetection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -259,7 +255,6 @@ func TestProperty_ImagePullFailureDetection(t *testing.T) {
 // detectFailure SHALL return a WorkerFailureInfo with Type = CONTAINER_CRASH.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.2, 3.3**
 func TestProperty_ContainerCrashDetection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -328,7 +323,6 @@ func TestProperty_ContainerCrashDetection(t *testing.T) {
 // detectFailure SHALL return a WorkerFailureInfo with Type = RESOURCE_LIMIT.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.2, 3.3**
 func TestProperty_ResourceLimitDetection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -396,7 +390,6 @@ func TestProperty_ResourceLimitDetection(t *testing.T) {
 // Property: Classification should be consistent regardless of message content when reason is explicit.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.2, 3.3**
 func TestProperty_ClassificationConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -448,7 +441,6 @@ func TestProperty_ClassificationConsistency(t *testing.T) {
 // Property: isFailureState should be consistent and deterministic for all inputs.
 //
 // Feature: image-validation-and-status, Property 4: Pod status tracking completeness
-// **Validates: Requirements 3.1, 3.2**
 func TestProperty_IsFailureStateConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

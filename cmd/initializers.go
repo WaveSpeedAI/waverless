@@ -13,11 +13,13 @@ import (
 	"waverless/pkg/autoscaler"
 	"waverless/pkg/capacity"
 	"waverless/pkg/config"
+	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
 	"waverless/pkg/resource"
+	"waverless/pkg/status"
 	mysqlstore "waverless/pkg/store/mysql"
 	redisstore "waverless/pkg/store/redis"
 
@@ -148,6 +150,16 @@ func (app *Application) initServices() error {
 	// Set task service on worker service (for event recording)
 	app.workerService.SetTaskService(app.taskService)
 
+	// Wire status summary updater on worker service so heartbeat-driven status changes
+	// (e.g. STARTING → ONLINE) trigger endpoint status summary recomputation.
+	app.workerService.SetStatusSummaryUpdater(func(ctx context.Context, endpoint string) {
+		if app.endpointService != nil {
+			if err := app.endpointService.UpdateStatusSummary(ctx, endpoint); err != nil {
+				logger.WarnCtx(ctx, "Failed to update status summary from heartbeat for endpoint %s: %v", endpoint, err)
+			}
+		}
+	})
+
 	// Set worker service on task service (for worker stats recording)
 	app.taskService.SetWorkerService(app.workerService)
 
@@ -162,6 +174,9 @@ func (app *Application) initServices() error {
 
 	// Initialize monitoring service
 	app.monitoringService = service.NewMonitoringService(app.mysqlRepo.Monitoring)
+
+	// Initialize status event service (for status event tracking)
+	app.statusEventService = service.NewStatusEventService(app.mysqlRepo.StatusEvent, nil)
 
 	// Get K8s deployment provider for draining check
 	var k8sDeployProvider *k8s.K8sDeploymentProvider
@@ -195,6 +210,11 @@ func (app *Application) initServices() error {
 		logger.WarnCtx(app.ctx, "Failed to setup lifecycle manager: %v (non-critical, continuing)", err)
 	}
 
+	// Wire status summary dependencies on endpoint service
+	// These are needed for ComputeStatusSummary and UpdateStatusSummary
+	app.endpointService.SetWorkerRepository(app.mysqlRepo.Worker)
+	app.endpointService.SetEndpointRepository(app.mysqlRepo.Endpoint)
+
 	// Start pod cleanup job for stuck terminating pods (when K8s is enabled)
 	if err := app.startPodCleanupJob(k8sDeployProvider); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to start pod cleanup job: %v (non-critical, continuing)", err)
@@ -208,7 +228,6 @@ func (app *Application) initServices() error {
 
 	// Setup Resource Releaser for automatic cleanup of failed workers
 	// This monitors workers with IMAGE_PULL_FAILED status and terminates them after timeout
-	// Validates: Requirements 5.1, 5.2, 5.3, 5.4
 	if err := app.setupResourceReleaser(); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to setup resource releaser: %v (non-critical, continuing)", err)
 	}
@@ -228,6 +247,19 @@ func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProv
 		app.workerEventService,
 	)
 
+	// Wire endpoint service for status summary updates on worker status changes
+	if app.endpointService != nil {
+		app.lifecycleManager.SetEndpointService(app.endpointService)
+	}
+
+	// Wire status event recorder and pending phase detector for status_events recording.
+	// This enables recording of status changes, pending phase transitions, and failures.
+	if app.statusEventService != nil {
+		app.lifecycleManager.SetStatusEventRecorder(app.statusEventService)
+	}
+	pendingDetector := status.NewPendingPhaseDetector(nil)
+	app.lifecycleManager.SetPendingPhaseDetector(pendingDetector)
+
 	// Register K8s provider if enabled
 	if k8sProvider != nil {
 		logger.InfoCtx(app.ctx, "Registering K8s provider with lifecycle manager...")
@@ -244,7 +276,7 @@ func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProv
 		}
 	}
 
-	logger.InfoCtx(app.ctx, "✅ Lifecycle manager setup completed with providers: %v", app.lifecycleManager.GetRegisteredProviders())
+	logger.InfoCtx(app.ctx, "Lifecycle manager setup completed with providers: %v", app.lifecycleManager.GetRegisteredProviders())
 	return nil
 }
 
@@ -281,6 +313,12 @@ func (app *Application) initHandlers() error {
 	if app.endpointService != nil {
 		app.imageHandler = handler.NewImageHandler(app.endpointService, &app.config.Docker)
 		logger.InfoCtx(app.ctx, "Image handler initialized")
+	}
+
+	// Initialize Status Event Handler (for status event API)
+	if app.statusEventService != nil {
+		app.statusEventHandler = handler.NewStatusEventHandler(app.statusEventService)
+		logger.InfoCtx(app.ctx, "Status event handler initialized")
 	}
 
 	return nil
@@ -340,22 +378,11 @@ func (app *Application) initAutoScaler() error {
 }
 
 // setupResourceReleaser sets up the resource releaser for automatic cleanup of failed workers.
-// This component monitors workers with IMAGE_PULL_FAILED status and terminates them after the configured timeout.
-// It prevents GPU resources from being wasted on workers that cannot start due to image issues.
-//
-// The releaser performs the following actions:
-// 1. Periodically checks for workers with IMAGE_PULL_FAILED failure type
-// 2. If a worker has been in failed state longer than ImagePullTimeout (default: 5 minutes), terminates it
-// 3. Updates the endpoint health status based on the ratio of failed workers
-//
-// Validates: Requirements 5.1, 5.2, 5.3, 5.4
 func (app *Application) setupResourceReleaser() error {
 	if app.deploymentProvider == nil {
 		logger.InfoCtx(app.ctx, "Deployment provider not available, skipping resource releaser setup")
 		return nil
 	}
-
-	logger.InfoCtx(app.ctx, "Setting up resource releaser for automatic cleanup of failed workers...")
 
 	// Get configuration from config file or use defaults
 	releaserConfig := resource.DefaultResourceReleaserConfig()
@@ -363,6 +390,9 @@ func (app *Application) setupResourceReleaser() error {
 	// Override with config values if available
 	if app.config.ResourceReleaser.ImagePullTimeout > 0 {
 		releaserConfig.ImagePullTimeout = app.config.ResourceReleaser.ImagePullTimeout
+	}
+	if app.config.ResourceReleaser.NodeProvisionTimeout > 0 {
+		releaserConfig.NodeProvisionTimeout = app.config.ResourceReleaser.NodeProvisionTimeout
 	}
 	if app.config.ResourceReleaser.CheckInterval > 0 {
 		releaserConfig.CheckInterval = app.config.ResourceReleaser.CheckInterval
@@ -381,19 +411,18 @@ func (app *Application) setupResourceReleaser() error {
 
 	// Start the releaser in a goroutine
 	go func() {
-		logger.InfoCtx(app.ctx, "Starting resource releaser with config: imagePullTimeout=%v, checkInterval=%v, maxRetries=%d",
-			releaserConfig.ImagePullTimeout, releaserConfig.CheckInterval, releaserConfig.MaxRetries)
+		logger.InfoCtx(app.ctx, "Resource releaser started: imagePullTimeout=%v, nodeProvisionTimeout=%v, checkInterval=%v, maxRetries=%d",
+			releaserConfig.ImagePullTimeout, releaserConfig.NodeProvisionTimeout, releaserConfig.CheckInterval, releaserConfig.MaxRetries)
 		releaser.Start(app.ctx)
 	}()
 
-	logger.InfoCtx(app.ctx, "✅ Resource releaser setup completed")
 	return nil
 }
 
 // initHTTPServer initializes HTTP server
 func (app *Application) initHTTPServer() error {
 	// Initialize router
-	r := router.NewRouter(app.taskHandler, app.workerHandler, app.endpointHandler, app.autoscalerHandler, app.statisticsHandler, app.specHandler, app.imageHandler, app.monitoringHandler)
+	r := router.NewRouter(app.taskHandler, app.workerHandler, app.endpointHandler, app.autoscalerHandler, app.statisticsHandler, app.specHandler, app.imageHandler, app.monitoringHandler, app.statusEventHandler)
 
 	// Set Gin mode
 	gin.SetMode(app.config.Server.Mode)
@@ -493,7 +522,29 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 		}
 	}()
 
-	logger.InfoCtx(app.ctx, "✅ Capacity manager setup completed")
+	// Wire capacity manager into endpoint service for Spot status lookup in status summary
+	if app.endpointService != nil {
+		app.endpointService.SetCapacityManager(app.capacityMgr)
+	}
+
+	// Register callback to propagate capacity failure info to WAITING_NODE workers.
+	// When Karpenter detects NodeClaim failure (e.g. UnfulfillableCapacity), update the
+	// pending_reason/pending_message on all workers waiting for that spec's node, and
+	// record a status_event so the timeline reflects the real failure reason.
+	app.capacityMgr.OnChange(func(event interfaces.CapacityEvent) {
+		if event.Status != interfaces.CapacitySoldOut {
+			return
+		}
+		logger.InfoCtx(app.ctx, "Capacity sold_out detected: spec=%s, reason=%s", event.SpecName, event.Reason)
+		go app.propagateCapacityFailureToWorkers(event)
+	})
+
+	// Wire spot price lookup into lifecycle manager for recording spot price at worker creation
+	if app.lifecycleManager != nil {
+		app.lifecycleManager.SetSpotPriceLookup(&capacitySpotPriceLookup{mgr: app.capacityMgr})
+	}
+
+	logger.InfoCtx(app.ctx, "Capacity manager setup completed")
 	return nil
 }
 
@@ -540,4 +591,74 @@ func (a *k8sPodCountAdapter) GetPodCountsBySpec(ctx context.Context) (map[string
 		}
 	}
 	return result, nil
+}
+
+// capacitySpotPriceLookup adapts capacity.Manager to lifecycle.SpotPriceLookup
+type capacitySpotPriceLookup struct {
+	mgr *capacity.Manager
+}
+
+func (a *capacitySpotPriceLookup) GetSpotPriceBySpec(specName string) (float64, string, bool) {
+	spotStatus := a.mgr.GetSpotStatusBySpec(specName)
+	if spotStatus == nil || spotStatus.Price <= 0 {
+		return 0, "", false
+	}
+	return spotStatus.Price, spotStatus.InstanceType, true
+}
+
+// propagateCapacityFailureToWorkers updates WAITING_NODE workers with capacity failure info
+// and records status_events so the timeline reflects the real failure reason.
+func (app *Application) propagateCapacityFailureToWorkers(event interfaces.CapacityEvent) {
+	ctx := app.ctx
+	specName := event.SpecName
+
+	// Find all endpoints using this spec
+	endpoints, err := app.mysqlRepo.Endpoint.GetBySpecName(ctx, specName)
+	if err != nil {
+		logger.WarnCtx(ctx, "propagateCapacityFailure: failed to get endpoints for spec %s: %v", specName, err)
+		return
+	}
+	if len(endpoints) == 0 {
+		return
+	}
+
+	endpointNames := make([]string, len(endpoints))
+	for i, ep := range endpoints {
+		endpointNames[i] = ep.Endpoint
+	}
+
+	// Find all WAITING_NODE workers for these endpoints
+	workers, err := app.mysqlRepo.Worker.GetWorkersInPendingPhaseByEndpoints(ctx, "WAITING_NODE", endpointNames)
+	if err != nil {
+		logger.WarnCtx(ctx, "propagateCapacityFailure: failed to get WAITING_NODE workers: %v", err)
+		return
+	}
+	if len(workers) == 0 {
+		return
+	}
+
+	// Build user-friendly reason from the capacity event
+	reason := "NodeProvisionFailed"
+	message := "GPU capacity insufficient for spec " + specName
+	if event.Reason != "" {
+		message += " (" + event.Reason + ")"
+	}
+
+	for _, w := range workers {
+		// Update worker pending info
+		if err := app.mysqlRepo.Worker.UpdatePendingPhase(ctx, w.PodName, "WAITING_NODE", reason, message); err != nil {
+			logger.WarnCtx(ctx, "propagateCapacityFailure: failed to update worker %s: %v", w.PodName, err)
+			continue
+		}
+
+		// Record a status_event so the timeline shows the real failure
+		if app.statusEventService != nil {
+			if err := app.statusEventService.RecordPhaseChange(ctx, w.PodName, w.Endpoint, "WAITING_NODE", reason, message, nil); err != nil {
+				logger.WarnCtx(ctx, "propagateCapacityFailure: failed to record status event for %s: %v", w.PodName, err)
+			}
+		}
+	}
+
+	logger.InfoCtx(ctx, "propagateCapacityFailure: updated %d WAITING_NODE workers for spec %s with capacity failure info",
+		len(workers), specName)
 }

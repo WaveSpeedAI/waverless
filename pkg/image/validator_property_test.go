@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 1: Image format validation
-// **Validates: Requirements 1.1, 1.2**
 package image
 
 import (
@@ -23,7 +22,6 @@ import (
 // with a descriptive error message.
 //
 // Feature: image-validation-and-status, Property 1: Image format validation
-// **Validates: Requirements 1.1, 1.2**
 func TestProperty_ImageFormatValidation(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -100,7 +98,6 @@ func TestProperty_ImageFormatValidation(t *testing.T) {
 // TestProperty_ValidImageFormats tests that all valid image format patterns are accepted
 //
 // Feature: image-validation-and-status, Property 1: Image format validation
-// **Validates: Requirements 1.1, 1.3**
 func TestProperty_ValidImageFormats(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -167,7 +164,6 @@ func TestProperty_ValidImageFormats(t *testing.T) {
 // TestProperty_InvalidImageFormats tests that all invalid image format patterns are rejected
 //
 // Feature: image-validation-and-status, Property 1: Image format validation
-// **Validates: Requirements 1.1, 1.2**
 func TestProperty_InvalidImageFormats(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

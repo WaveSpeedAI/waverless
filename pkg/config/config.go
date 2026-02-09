@@ -30,7 +30,6 @@ type Config struct {
 }
 
 // ImageValidationConfig contains configuration for image validation.
-// Validates: Requirements 8.1, 8.3, 8.4, 8.5
 type ImageValidationConfig struct {
 	// Enabled indicates whether image validation is enabled
 	// Environment variable: IMAGE_VALIDATION_ENABLED
@@ -50,12 +49,17 @@ type ImageValidationConfig struct {
 }
 
 // ResourceReleaserConfig contains configuration for the ResourceReleaser.
-// Validates: Requirements 8.1, 8.2, 8.5
 type ResourceReleaserConfig struct {
 	// ImagePullTimeout is the maximum time to wait for image pull before terminating the worker.
 	// Default: 5 minutes
 	// Environment variable: RESOURCE_RELEASER_IMAGE_PULL_TIMEOUT (in seconds)
 	ImagePullTimeout time.Duration `yaml:"imagePullTimeout"`
+
+	// NodeProvisionTimeout is the maximum time to wait for node provisioning (WAITING_NODE phase)
+	// before terminating the worker and scaling down the endpoint.
+	// Default: 30 minutes
+	// Environment variable: RESOURCE_RELEASER_NODE_PROVISION_TIMEOUT (in seconds)
+	NodeProvisionTimeout time.Duration `yaml:"nodeProvisionTimeout"`
 
 	// CheckInterval is the interval between checks for stuck workers.
 	// Default: 30 seconds
@@ -81,9 +85,10 @@ func DefaultImageValidationConfig() ImageValidationConfig {
 // DefaultResourceReleaserConfig returns the default configuration for ResourceReleaser.
 func DefaultResourceReleaserConfig() ResourceReleaserConfig {
 	return ResourceReleaserConfig{
-		ImagePullTimeout: 5 * time.Minute,
-		CheckInterval:    30 * time.Second,
-		MaxRetries:       3,
+		ImagePullTimeout:     5 * time.Minute,
+		NodeProvisionTimeout: 30 * time.Minute,
+		CheckInterval:        30 * time.Second,
+		MaxRetries:           3,
 	}
 }
 
@@ -282,6 +287,14 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	if v := os.Getenv("RESOURCE_RELEASER_NODE_PROVISION_TIMEOUT"); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			cfg.ResourceReleaser.NodeProvisionTimeout = time.Duration(seconds) * time.Second
+		} else {
+			log.Printf("[WARN] Invalid RESOURCE_RELEASER_NODE_PROVISION_TIMEOUT value '%s', using config file value: %v", v, err)
+		}
+	}
+
 	if v := os.Getenv("RESOURCE_RELEASER_CHECK_INTERVAL"); v != "" {
 		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
 			cfg.ResourceReleaser.CheckInterval = time.Duration(seconds) * time.Second
@@ -301,7 +314,6 @@ func applyEnvOverrides(cfg *Config) {
 
 // validateAndApplyDefaults validates configuration values and applies defaults for invalid values.
 // This implements Property 9: Configuration Fallback to Defaults from the design document.
-// Validates: Requirements 8.5
 func validateAndApplyDefaults(cfg *Config) {
 	defaults := DefaultImageValidationConfig()
 	releaserDefaults := DefaultResourceReleaserConfig()
@@ -340,6 +352,12 @@ func validateAndApplyDefaults(cfg *Config) {
 		log.Printf("[WARN] Invalid resourceReleaser.imagePullTimeout value '%v', using default '%v'",
 			cfg.ResourceReleaser.ImagePullTimeout, releaserDefaults.ImagePullTimeout)
 		cfg.ResourceReleaser.ImagePullTimeout = releaserDefaults.ImagePullTimeout
+	}
+
+	if cfg.ResourceReleaser.NodeProvisionTimeout <= 0 {
+		log.Printf("[WARN] Invalid resourceReleaser.nodeProvisionTimeout value '%v', using default '%v'",
+			cfg.ResourceReleaser.NodeProvisionTimeout, releaserDefaults.NodeProvisionTimeout)
+		cfg.ResourceReleaser.NodeProvisionTimeout = releaserDefaults.NodeProvisionTimeout
 	}
 
 	if cfg.ResourceReleaser.CheckInterval <= 0 {

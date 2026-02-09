@@ -41,16 +41,18 @@ type Application struct {
 	statisticsService  *service.StatisticsService
 	specService        *service.SpecService
 	monitoringService  *service.MonitoringService
+	statusEventService *service.StatusEventService
 
 	// Handler layer
-	taskHandler       *handler.TaskHandler
-	workerHandler     *handler.WorkerHandler
-	endpointHandler   *handler.EndpointHandler
-	autoscalerHandler *handler.AutoScalerHandler
-	statisticsHandler *handler.StatisticsHandler
-	specHandler       *handler.SpecHandler
-	imageHandler      *handler.ImageHandler
-	monitoringHandler *handler.MonitoringHandler
+	taskHandler        *handler.TaskHandler
+	workerHandler      *handler.WorkerHandler
+	endpointHandler    *handler.EndpointHandler
+	autoscalerHandler  *handler.AutoScalerHandler
+	statisticsHandler  *handler.StatisticsHandler
+	specHandler        *handler.SpecHandler
+	imageHandler       *handler.ImageHandler
+	monitoringHandler  *handler.MonitoringHandler
+	statusEventHandler *handler.StatusEventHandler
 
 	// Lifecycle Manager
 	lifecycleManager *lifecycle.Manager

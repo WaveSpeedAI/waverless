@@ -1,0 +1,139 @@
+# AWS EKS specific configurations for Waverless
+# This file contains:
+# 1. Karpenter RBAC - for reading NodeClaim/NodePool resources
+# 2. IRSA setup instructions - for AWS EC2 Spot API access
+#
+# Usage:
+#   1. Apply Kubernetes resources: kubectl apply -f waverless-aws-eks.yaml
+#   2. Follow IRSA setup instructions below to configure AWS IAM
+#
+# Prerequisites:
+#   - EKS cluster with OIDC provider enabled
+#   - Karpenter installed (for NodeClaim/NodePool resources)
+
+---
+# ClusterRole for reading Karpenter resources (NodeClaim, NodePool)
+# Required for capacity tracking and spot availability monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: waverless-karpenter-reader
+  labels:
+    app: waverless
+rules:
+  - apiGroups: ["karpenter.sh"]
+    resources: ["nodeclaims", "nodepools"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding - binds the ClusterRole to waverless ServiceAccount
+# NOTE: Update the namespace to match your deployment namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: waverless-karpenter-reader-binding
+  labels:
+    app: waverless
+subjects:
+  - kind: ServiceAccount
+    name: waverless
+    namespace: wavespeed-prod  # <-- Change this to your namespace
+roleRef:
+  kind: ClusterRole
+  name: waverless-karpenter-reader
+  apiGroup: rbac.authorization.k8s.io
+
+# =============================================================================
+# IRSA (IAM Roles for Service Accounts) Setup Instructions
+# =============================================================================
+#
+# IRSA allows the waverless pod to access AWS EC2 APIs for Spot availability
+# checking without storing AWS credentials in the cluster.
+#
+# Step 1: Create IAM Policy
+# -------------------------
+# aws iam create-policy \
+#   --policy-name waverless-ec2-spot-policy \
+#   --policy-document '{
+#     "Version": "2012-10-17",
+#     "Statement": [
+#       {
+#         "Effect": "Allow",
+#         "Action": [
+#           "ec2:GetSpotPlacementScores",
+#           "ec2:DescribeSpotPriceHistory"
+#         ],
+#         "Resource": "*"
+#       }
+#     ]
+#   }' \
+#   --description "Allow Waverless to check EC2 Spot availability"
+#
+# Step 2: Get your EKS OIDC provider URL
+# --------------------------------------
+# OIDC_URL=$(aws eks describe-cluster --name YOUR_CLUSTER_NAME \
+#   --query "cluster.identity.oidc.issuer" --output text)
+# OIDC_ID=$(echo $OIDC_URL | cut -d'/' -f5)
+# ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+#
+# Step 3: Create IAM Role with trust policy
+# -----------------------------------------
+# Create trust-policy.json:
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Effect": "Allow",
+#       "Principal": {
+#         "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/oidc.eks.${REGION}.amazonaws.com/id/${OIDC_ID}"
+#       },
+#       "Action": "sts:AssumeRoleWithWebIdentity",
+#       "Condition": {
+#         "StringEquals": {
+#           "oidc.eks.${REGION}.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:${NAMESPACE}:waverless",
+#           "oidc.eks.${REGION}.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com"
+#         }
+#       }
+#     }
+#   ]
+# }
+#
+# aws iam create-role \
+#   --role-name waverless-ec2-spot-role \
+#   --assume-role-policy-document file://trust-policy.json \
+#   --description "IAM role for Waverless to access EC2 Spot APIs"
+#
+# Step 4: Attach policy to role
+# -----------------------------
+# aws iam attach-role-policy \
+#   --role-name waverless-ec2-spot-role \
+#   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/waverless-ec2-spot-policy
+#
+# Step 5: Annotate ServiceAccount with IAM role ARN
+# -------------------------------------------------
+# kubectl annotate serviceaccount waverless \
+#   -n ${NAMESPACE} \
+#   eks.amazonaws.com/role-arn=arn:aws:iam::${ACCOUNT_ID}:role/waverless-ec2-spot-role \
+#   --overwrite
+#
+# Step 6: Restart deployment to pick up new credentials
+# -----------------------------------------------------
+# kubectl rollout restart deployment waverless -n ${NAMESPACE}
+#
+# =============================================================================
+# Verification
+# =============================================================================
+#
+# Check if IRSA is working:
+# kubectl get pod -n ${NAMESPACE} -l app=waverless -o jsonpath='{.items[0].spec.containers[0].env}' | jq
+#
+# You should see these environment variables injected:
+# - AWS_ROLE_ARN
+# - AWS_WEB_IDENTITY_TOKEN_FILE
+#
+# Check logs for successful spot checking:
+# kubectl logs deployment/waverless -n ${NAMESPACE} | grep -i "spot"
+#
+# Expected output:
+# "AWS Spot checker enabled: X from config, Y from nodepool"
+# "Spot check: spec=xxx, instance=xxx, score=X, price=$X.XX/hr"

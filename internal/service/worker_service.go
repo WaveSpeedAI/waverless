@@ -15,14 +15,19 @@ import (
 	mysqlModel "waverless/pkg/store/mysql/model"
 )
 
+// StatusSummaryUpdater is called when a worker status change should trigger
+// an endpoint status summary recomputation.
+type StatusSummaryUpdater func(ctx context.Context, endpoint string)
+
 // WorkerService Worker service (MySQL-based)
 type WorkerService struct {
-	workerRepo         *mysql.WorkerRepository
-	taskRepo           *mysql.TaskRepository
-	monitoringRepo     *mysql.MonitoringRepository
-	taskService        *TaskService
-	workerEventService *WorkerEventService
-	deployProvider     interfaces.DeploymentProvider
+	workerRepo           *mysql.WorkerRepository
+	taskRepo             *mysql.TaskRepository
+	monitoringRepo       *mysql.MonitoringRepository
+	taskService          *TaskService
+	workerEventService   *WorkerEventService
+	deployProvider       interfaces.DeploymentProvider
+	statusSummaryUpdater StatusSummaryUpdater
 }
 
 // NewWorkerService creates a new Worker service
@@ -43,6 +48,12 @@ func (s *WorkerService) SetWorkerEventService(svc *WorkerEventService) {
 // SetTaskService sets the task service (for circular dependency resolution)
 func (s *WorkerService) SetTaskService(taskService *TaskService) {
 	s.taskService = taskService
+}
+
+// SetStatusSummaryUpdater sets the callback for triggering endpoint status summary updates.
+// This is called when worker status changes via heartbeat (STARTING → ONLINE).
+func (s *WorkerService) SetStatusSummaryUpdater(updater StatusSummaryUpdater) {
+	s.statusSummaryUpdater = updater
 }
 
 // HandleHeartbeat handles heartbeat requests
@@ -74,6 +85,11 @@ func (s *WorkerService) HandleHeartbeat(ctx context.Context, req *model.Heartbea
 			podName = existingWorker.PodName
 		}
 		s.workerEventService.RecordWorkerRegistered(ctx, req.WorkerID, endpoint, podName, coldStartMs)
+	}
+
+	// Trigger status summary update when worker transitions from STARTING to ONLINE
+	if wasStarting && s.statusSummaryUpdater != nil {
+		go s.statusSummaryUpdater(ctx, endpoint)
 	}
 
 	// Update LastTaskTime when worker becomes idle (completed all tasks)
@@ -278,10 +294,18 @@ func (s *WorkerService) CleanupOfflineWorkers(ctx context.Context) error {
 	}
 	if affected > 0 {
 		logger.InfoCtx(ctx, "marked %d stale workers as OFFLINE", affected)
-		// Record WORKER_OFFLINE events
+		// Record WORKER_OFFLINE events and trigger status summary updates
 		if s.workerEventService != nil {
+			endpointsToUpdate := make(map[string]struct{})
 			for _, w := range staleWorkers {
 				s.workerEventService.RecordWorkerOffline(ctx, w.WorkerID, w.Endpoint, w.PodName)
+				endpointsToUpdate[w.Endpoint] = struct{}{}
+			}
+			// Trigger status summary update for affected endpoints
+			if s.statusSummaryUpdater != nil {
+				for ep := range endpointsToUpdate {
+					go s.statusSummaryUpdater(ctx, ep)
+				}
 			}
 		}
 	}

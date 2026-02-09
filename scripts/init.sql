@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS `endpoints` (
   `health_status` varchar(16) DEFAULT 'HEALTHY' COMMENT 'Health status: HEALTHY, UNHEALTHY, DEGRADED',
   `health_message` varchar(512) DEFAULT NULL COMMENT 'Health-related messages',
   `last_health_check_at` datetime(3) DEFAULT NULL COMMENT 'Last health check timestamp',
+  `status_summary` json DEFAULT NULL COMMENT 'Aggregated worker status summary: {totalWorkers, workersByStatus, workersByPhase, pendingDetails, failureDetails, spotCapacity, lastUpdated}',
+  `last_status_summary_at` datetime(3) DEFAULT NULL COMMENT 'Timestamp when status_summary was last updated',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
@@ -141,6 +143,12 @@ CREATE TABLE IF NOT EXISTS `workers` (
   `failure_reason` varchar(512) DEFAULT NULL COMMENT 'Sanitized user-friendly failure message',
   `failure_details` text DEFAULT NULL COMMENT 'JSON with full failure details for debugging',
   `failure_occurred_at` datetime DEFAULT NULL COMMENT 'Timestamp when failure was detected',
+  `pending_phase` varchar(32) DEFAULT NULL COMMENT 'Pending phase: SCHEDULING, WAITING_NODE, PULLING_IMAGE, INITIALIZING',
+  `pending_phase_since` datetime(3) DEFAULT NULL COMMENT 'Timestamp when current pending phase started',
+  `pending_reason` varchar(255) DEFAULT NULL COMMENT 'Reason for pending state (e.g., Unschedulable, ContainerCreating)',
+  `pending_message` text DEFAULT NULL COMMENT 'Detailed message about the pending state',
+  `spot_price` decimal(10,6) DEFAULT NULL COMMENT 'Spot price (USD/hour) at worker creation time',
+  `spot_instance_type` varchar(64) DEFAULT NULL COMMENT 'Spot instance type (e.g., g4dn.xlarge)',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
@@ -148,7 +156,8 @@ CREATE TABLE IF NOT EXISTS `workers` (
   KEY `idx_endpoint` (`endpoint`),
   KEY `idx_status` (`status`),
   KEY `idx_last_heartbeat` (`last_heartbeat`),
-  KEY `idx_workers_failure_type` (`failure_type`)
+  KEY `idx_workers_failure_type` (`failure_type`),
+  KEY `idx_workers_pending_phase` (`pending_phase`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Worker records';
 
 -- Worker Events (lifecycle tracking)
@@ -393,3 +402,26 @@ CREATE TABLE IF NOT EXISTS `scaling_events` (
   KEY `idx_action` (`action`),
   KEY `idx_timestamp` (`timestamp`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Autoscaling event history';
+
+-- ============================================================================
+-- Status Tracking Tables
+-- ============================================================================
+
+-- Status Events (worker status and phase change tracking)
+CREATE TABLE IF NOT EXISTS `status_events` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `worker_id` varchar(64) NOT NULL COMMENT 'Worker unique ID',
+  `endpoint` varchar(255) NOT NULL COMMENT 'Endpoint name',
+  `event_type` varchar(32) NOT NULL COMMENT 'Event type: STATUS_CHANGE, PHASE_CHANGE, FAILURE, RECOVERY',
+  `old_status` varchar(32) DEFAULT NULL COMMENT 'Previous status before change',
+  `new_status` varchar(32) NOT NULL COMMENT 'New status after change',
+  `phase` varchar(32) DEFAULT NULL COMMENT 'Pending phase: SCHEDULING, WAITING_NODE, PULLING_IMAGE, INITIALIZING',
+  `reason` varchar(255) DEFAULT NULL COMMENT 'Reason for the status change',
+  `message` text DEFAULT NULL COMMENT 'Detailed message about the status change',
+  `spot_status` json DEFAULT NULL COMMENT 'AWS Spot capacity status: {capacity, score, price, instanceType}',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Event timestamp',
+  PRIMARY KEY (`id`),
+  KEY `idx_endpoint_created` (`endpoint`, `created_at`) COMMENT 'For querying events by endpoint with time ordering',
+  KEY `idx_worker_created` (`worker_id`, `created_at`) COMMENT 'For querying events by worker with time ordering',
+  KEY `idx_created_at` (`created_at`) COMMENT 'For time-based cleanup and queries'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Status change events for workers - tracks status and phase transitions';

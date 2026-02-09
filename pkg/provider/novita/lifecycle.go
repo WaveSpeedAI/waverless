@@ -74,7 +74,7 @@ func (l *NovitaProviderLifecycle) RegisterWatchers(callbacks *NovitaLifecycleCal
 	}
 
 	l.started = true
-	logger.InfoCtx(l.ctx, "✅ Novita lifecycle watchers registered successfully")
+	logger.InfoCtx(l.ctx, "Novita lifecycle watchers registered successfully")
 	return nil
 }
 
