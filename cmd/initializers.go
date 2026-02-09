@@ -13,6 +13,7 @@ import (
 	"waverless/pkg/autoscaler"
 	"waverless/pkg/capacity"
 	"waverless/pkg/config"
+	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
 	"waverless/pkg/provider/k8s"
@@ -546,6 +547,17 @@ func (app *Application) setupCapacityManager(k8sProvider *k8s.K8sDeploymentProvi
 		app.endpointService.SetCapacityManager(app.capacityMgr)
 	}
 
+	// Register callback to propagate capacity failure info to WAITING_NODE workers.
+	// When Karpenter detects NodeClaim failure (e.g. UnfulfillableCapacity), update the
+	// pending_reason/pending_message on all workers waiting for that spec's node, and
+	// record a status_event so the timeline reflects the real failure reason.
+	app.capacityMgr.OnChange(func(event interfaces.CapacityEvent) {
+		if event.Status != interfaces.CapacitySoldOut {
+			return
+		}
+		go app.propagateCapacityFailureToWorkers(event)
+	})
+
 	// Wire spot price lookup into lifecycle manager for recording spot price at worker creation
 	if app.lifecycleManager != nil {
 		app.lifecycleManager.SetSpotPriceLookup(&capacitySpotPriceLookup{mgr: app.capacityMgr})
@@ -611,4 +623,63 @@ func (a *capacitySpotPriceLookup) GetSpotPriceBySpec(specName string) (float64, 
 		return 0, "", false
 	}
 	return spotStatus.Price, spotStatus.InstanceType, true
+}
+
+// propagateCapacityFailureToWorkers propagates capacity failure information (e.g. NodeClaim
+// InsufficientCapacity / UnfulfillableCapacity) to workers stuck in WAITING_NODE phase.
+// This updates their pending_reason and pending_message so the status_events timeline
+// reflects the real failure reason instead of just "Unschedulable".
+func (app *Application) propagateCapacityFailureToWorkers(event interfaces.CapacityEvent) {
+	ctx := app.ctx
+	specName := event.SpecName
+
+	// Find all endpoints using this spec
+	endpoints, err := app.mysqlRepo.Endpoint.GetBySpecName(ctx, specName)
+	if err != nil {
+		logger.WarnCtx(ctx, "propagateCapacityFailure: failed to get endpoints for spec %s: %v", specName, err)
+		return
+	}
+	if len(endpoints) == 0 {
+		return
+	}
+
+	endpointNames := make([]string, len(endpoints))
+	for i, ep := range endpoints {
+		endpointNames[i] = ep.Endpoint
+	}
+
+	// Find all WAITING_NODE workers for these endpoints
+	workers, err := app.mysqlRepo.Worker.GetWorkersInPendingPhaseByEndpoints(ctx, "WAITING_NODE", endpointNames)
+	if err != nil {
+		logger.WarnCtx(ctx, "propagateCapacityFailure: failed to get WAITING_NODE workers: %v", err)
+		return
+	}
+	if len(workers) == 0 {
+		return
+	}
+
+	// Build user-friendly reason from the capacity event
+	reason := "NodeProvisionFailed"
+	message := "GPU capacity insufficient for spec " + specName
+	if event.Reason != "" {
+		message += " (" + event.Reason + ")"
+	}
+
+	for _, w := range workers {
+		// Update worker pending info
+		if err := app.mysqlRepo.Worker.UpdatePendingPhase(ctx, w.PodName, "WAITING_NODE", reason, message); err != nil {
+			logger.WarnCtx(ctx, "propagateCapacityFailure: failed to update worker %s: %v", w.PodName, err)
+			continue
+		}
+
+		// Record a status_event so the timeline shows the real failure
+		if app.statusEventService != nil {
+			if err := app.statusEventService.RecordPhaseChange(ctx, w.PodName, w.Endpoint, "WAITING_NODE", reason, message, nil); err != nil {
+				logger.WarnCtx(ctx, "propagateCapacityFailure: failed to record status event for %s: %v", w.PodName, err)
+			}
+		}
+	}
+
+	logger.InfoCtx(ctx, "propagateCapacityFailure: updated %d WAITING_NODE workers for spec %s with capacity failure info",
+		len(workers), specName)
 }

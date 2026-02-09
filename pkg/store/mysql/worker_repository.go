@@ -483,3 +483,17 @@ func (r *WorkerRepository) GetWorkersInPendingPhase(ctx context.Context, phase s
 		Find(&workers).Error
 	return workers, err
 }
+
+// GetWorkersInPendingPhaseByEndpoints returns all active workers in a specific pending phase
+// for the given list of endpoints. This is used to propagate capacity failure information
+// (e.g. NodeClaim InsufficientCapacity) to workers waiting for node provisioning.
+func (r *WorkerRepository) GetWorkersInPendingPhaseByEndpoints(ctx context.Context, phase string, endpoints []string) ([]*model.Worker, error) {
+	if len(endpoints) == 0 {
+		return nil, nil
+	}
+	var workers []*model.Worker
+	err := r.ds.DB(ctx).
+		Where("pending_phase = ? AND status != ? AND endpoint IN ?", phase, "OFFLINE", endpoints).
+		Find(&workers).Error
+	return workers, err
+}
