@@ -444,3 +444,32 @@ func (r *WorkerRepository) UpdateSpotPrice(ctx context.Context, podName string, 
 			"spot_instance_type": instanceType,
 		}).Error
 }
+
+// UpdatePendingPhase updates the pending phase information for a worker.
+// This is called when the PendingPhaseDetector detects a phase change during pod watching.
+func (r *WorkerRepository) UpdatePendingPhase(ctx context.Context, podName, phase, reason, message string) error {
+	now := time.Now()
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"pending_phase":       phase,
+			"pending_phase_since": now,
+			"pending_reason":      reason,
+			"pending_message":     message,
+			"updated_at":          now,
+		}).Error
+}
+
+// ClearPendingPhase clears the pending phase information for a worker.
+// This is called when a worker transitions out of pending state (e.g., becomes Running).
+func (r *WorkerRepository) ClearPendingPhase(ctx context.Context, podName string) error {
+	return r.ds.DB(ctx).Model(&model.Worker{}).
+		Where("pod_name = ?", podName).
+		Updates(map[string]interface{}{
+			"pending_phase":       nil,
+			"pending_phase_since": nil,
+			"pending_reason":      nil,
+			"pending_message":     nil,
+			"updated_at":          time.Now(),
+		}).Error
+}

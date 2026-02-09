@@ -36,6 +36,10 @@ type K8sLifecycleCallbacks struct {
 	// If set, pending phase changes will be detected and recorded.
 	// Validates: Requirements 1.1, 1.2, 1.3
 	PendingPhaseDetector *status.PendingPhaseDetector
+
+	// OnPendingPhaseUpdate is called when a pending phase is detected or cleared.
+	// Parameters: podName, endpoint, phase (empty string to clear), reason, message
+	OnPendingPhaseUpdate func(podName, endpoint, phase, reason, message string)
 }
 
 // K8sProviderLifecycle manages K8s provider lifecycle
@@ -161,6 +165,19 @@ func (l *K8sProviderLifecycle) registerPodStatusWatcher() error {
 				podConditions = podDetail.Conditions
 			}
 			failureDetector.HandleStatusChange(l.ctx, podName, endpoint, info, podConditions)
+
+			// 2b. Update pending phase in workers table
+			if l.callbacks.OnPendingPhaseUpdate != nil && l.callbacks.PendingPhaseDetector != nil {
+				if info != nil && info.Phase == "Pending" {
+					phaseInfo := l.callbacks.PendingPhaseDetector.DetectPhase(info, podConditions)
+					if phaseInfo != nil {
+						l.callbacks.OnPendingPhaseUpdate(podName, endpoint, string(phaseInfo.Phase), phaseInfo.Reason, phaseInfo.Message)
+					}
+				} else {
+					// Pod is no longer pending, clear pending phase
+					l.callbacks.OnPendingPhaseUpdate(podName, endpoint, "", "", "")
+				}
+			}
 		}
 
 		// 3. Detect failure and trigger failure callback

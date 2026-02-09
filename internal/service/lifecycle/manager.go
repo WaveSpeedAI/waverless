@@ -12,6 +12,7 @@ import (
 	"waverless/pkg/provider"
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
+	"waverless/pkg/status"
 	"waverless/pkg/store/mysql"
 )
 
@@ -26,6 +27,11 @@ type Manager struct {
 	endpointRepo       *mysql.EndpointRepository
 	workerService      *service.WorkerService
 	workerEventService *service.WorkerEventService
+
+	// statusEventRecorder records status/phase/failure events to the status_events table.
+	statusEventRecorder k8s.StatusEventRecorder
+	// pendingDetector detects the specific pending phase of a pod.
+	pendingDetector *status.PendingPhaseDetector
 }
 
 // NewManager creates a new lifecycle manager
@@ -61,6 +67,18 @@ func (m *Manager) SetEndpointService(svc *endpointsvc.Service) {
 // This enables recording the Spot price at worker creation time.
 func (m *Manager) SetSpotPriceLookup(lookup SpotPriceLookup) {
 	m.callbackHandler.SetSpotPriceLookup(lookup)
+}
+
+// SetStatusEventRecorder sets the status event recorder for recording status/phase/failure events.
+// This must be called before RegisterK8sProvider to ensure events are recorded.
+func (m *Manager) SetStatusEventRecorder(recorder k8s.StatusEventRecorder) {
+	m.statusEventRecorder = recorder
+}
+
+// SetPendingPhaseDetector sets the pending phase detector for detecting pending phases.
+// This must be called before RegisterK8sProvider to ensure pending phases are detected.
+func (m *Manager) SetPendingPhaseDetector(detector *status.PendingPhaseDetector) {
+	m.pendingDetector = detector
 }
 
 // RegisterK8sProvider registers K8s Provider and starts its watchers
@@ -176,6 +194,27 @@ func (m *Manager) createK8sCallbacks(k8sProvider *k8s.K8sDeploymentProvider) *k8
 			// When Deployment spec changes (e.g., image update), optimize rolling update
 			// by setting PodDeletionCost for idle workers to -1000, so K8s deletes them first
 			m.handleDeploymentChangeWithOptimization(k8sProvider, endpoint)
+		},
+		// Wire status event recorder and pending phase detector for status_events recording
+		StatusEventRecorder:  m.statusEventRecorder,
+		PendingPhaseDetector: m.pendingDetector,
+		// Update pending phase in workers table when detected or cleared
+		OnPendingPhaseUpdate: func(podName, endpoint, phase, reason, message string) {
+			if m.workerRepo == nil {
+				return
+			}
+			if phase == "" {
+				// Clear pending phase
+				if err := m.workerRepo.ClearPendingPhase(m.ctx, podName); err != nil {
+					logger.WarnCtx(m.ctx, "Failed to clear pending phase for worker %s: %v", podName, err)
+				}
+			} else {
+				if err := m.workerRepo.UpdatePendingPhase(m.ctx, podName, phase, reason, message); err != nil {
+					logger.WarnCtx(m.ctx, "Failed to update pending phase for worker %s: %v", podName, err)
+				} else {
+					logger.DebugCtx(m.ctx, "Updated pending phase for worker %s: %s", podName, phase)
+				}
+			}
 		},
 	}
 }

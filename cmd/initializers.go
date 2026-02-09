@@ -18,6 +18,7 @@ import (
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
 	"waverless/pkg/resource"
+	"waverless/pkg/status"
 	mysqlstore "waverless/pkg/store/mysql"
 	redisstore "waverless/pkg/store/redis"
 
@@ -148,6 +149,16 @@ func (app *Application) initServices() error {
 	// Set task service on worker service (for event recording)
 	app.workerService.SetTaskService(app.taskService)
 
+	// Wire status summary updater on worker service so heartbeat-driven status changes
+	// (e.g. STARTING → ONLINE) trigger endpoint status summary recomputation.
+	app.workerService.SetStatusSummaryUpdater(func(ctx context.Context, endpoint string) {
+		if app.endpointService != nil {
+			if err := app.endpointService.UpdateStatusSummary(ctx, endpoint); err != nil {
+				logger.WarnCtx(ctx, "Failed to update status summary from heartbeat for endpoint %s: %v", endpoint, err)
+			}
+		}
+	})
+
 	// Set worker service on task service (for worker stats recording)
 	app.taskService.SetWorkerService(app.workerService)
 
@@ -242,6 +253,18 @@ func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProv
 	if app.endpointService != nil {
 		app.lifecycleManager.SetEndpointService(app.endpointService)
 	}
+
+	// Wire status event recorder and pending phase detector for status_events recording.
+	// This enables recording of status changes, pending phase transitions, and failures.
+	// Validates: Requirements 1.4, 3.1
+	if app.statusEventService != nil {
+		app.lifecycleManager.SetStatusEventRecorder(app.statusEventService)
+		logger.InfoCtx(app.ctx, "Status event recorder wired into lifecycle manager")
+	}
+	// Create and wire pending phase detector
+	pendingDetector := status.NewPendingPhaseDetector(nil)
+	app.lifecycleManager.SetPendingPhaseDetector(pendingDetector)
+	logger.InfoCtx(app.ctx, "Pending phase detector wired into lifecycle manager")
 
 	// Register K8s provider if enabled
 	if k8sProvider != nil {
