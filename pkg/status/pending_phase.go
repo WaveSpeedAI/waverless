@@ -10,7 +10,6 @@ import (
 // PendingPhase represents the specific phase within Pending status.
 // When a Worker enters Pending status, it is classified into one of these phases
 // to provide more detailed information about why the service is not ready yet.
-// Validates: Requirement 1.1
 type PendingPhase string
 
 const (
@@ -20,12 +19,10 @@ const (
 
 	// PendingPhaseWaitingNode indicates the Pod is unschedulable and waiting for node scaling.
 	// This is detected when PodScheduled condition is False with reason "Unschedulable".
-	// Validates: Requirement 1.2
 	PendingPhaseWaitingNode PendingPhase = "WAITING_NODE"
 
 	// PendingPhasePullingImage indicates the node is ready but pulling the container image.
 	// This is detected when container status is Waiting with reason "ContainerCreating" or "ImagePullBackOff".
-	// Validates: Requirement 1.3
 	PendingPhasePullingImage PendingPhase = "PULLING_IMAGE"
 
 	// PendingPhaseInitializing indicates the image is pulled and init containers are running.
@@ -59,7 +56,6 @@ func (p PendingPhase) String() string {
 }
 
 // SpotCapacity represents the AWS Spot capacity classification.
-// Validates: Requirement 2.3
 type SpotCapacity string
 
 const (
@@ -75,7 +71,6 @@ const (
 
 // SpotStatus contains AWS Spot capacity information.
 // This is included in PendingPhaseInfo when the phase is WAITING_NODE.
-// Validates: Requirement 2.4
 type SpotStatus struct {
 	// Capacity is the classified capacity status: AVAILABLE, LIMITED, or CONSTRAINED.
 	Capacity SpotCapacity `json:"capacity"`
@@ -92,7 +87,6 @@ type SpotStatus struct {
 
 // PendingPhaseInfo contains detailed information about the pending phase.
 // This structure provides comprehensive information about why a Worker is in Pending status.
-// Validates: Requirement 1.1, 1.4
 type PendingPhaseInfo struct {
 	// Phase is the specific pending phase.
 	Phase PendingPhase `json:"phase"`
@@ -104,12 +98,10 @@ type PendingPhaseInfo struct {
 	Message string `json:"message"`
 
 	// Since is the timestamp when this phase started.
-	// Validates: Requirement 1.4
 	Since time.Time `json:"since"`
 
 	// SpotStatus contains AWS Spot capacity information.
 	// This is only populated when Phase is WAITING_NODE.
-	// Validates: Requirement 2.4
 	SpotStatus *SpotStatus `json:"spotStatus,omitempty"`
 }
 
@@ -139,7 +131,6 @@ func (p *PendingPhaseInfo) Duration() time.Duration {
 // - Score >= 7: AVAILABLE
 // - Score 4-6: LIMITED
 // - Score < 4: CONSTRAINED
-// Validates: Requirement 2.3
 func ClassifySpotCapacity(score int) SpotCapacity {
 	switch {
 	case score >= 7:

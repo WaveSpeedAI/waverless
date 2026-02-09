@@ -29,12 +29,10 @@ type K8sLifecycleCallbacks struct {
 
 	// StatusEventRecorder for recording status events (optional).
 	// If set, status change, phase change, and failure events will be recorded.
-	// Validates: Requirements 1.4, 3.1
 	StatusEventRecorder StatusEventRecorder
 
 	// PendingPhaseDetector for detecting pending phases (optional).
 	// If set, pending phase changes will be detected and recorded.
-	// Validates: Requirements 1.1, 1.2, 1.3
 	PendingPhaseDetector *status.PendingPhaseDetector
 
 	// OnPendingPhaseUpdate is called when a pending phase is detected or cleared.
@@ -108,7 +106,7 @@ func (l *K8sProviderLifecycle) RegisterWatchers(callbacks *K8sLifecycleCallbacks
 	}
 
 	l.started = true
-	logger.InfoCtx(l.ctx, "✅ K8s lifecycle watchers registered successfully")
+	logger.InfoCtx(l.ctx, "K8s lifecycle watchers registered successfully")
 	return nil
 }
 
@@ -133,7 +131,6 @@ func (l *K8sProviderLifecycle) StopWatchers() error {
 // registerPodStatusWatcher registers pod status change watcher
 // This method integrates with StatusEventService to record status changes,
 // phase changes, and failure events.
-// Validates: Requirements 1.4, 3.1
 func (l *K8sProviderLifecycle) registerPodStatusWatcher() error {
 	if l.callbacks == nil || l.callbacks.OnWorkerStatusChange == nil {
 		return nil

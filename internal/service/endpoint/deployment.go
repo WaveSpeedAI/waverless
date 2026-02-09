@@ -60,7 +60,6 @@ func NewDeploymentManager(provider interfaces.DeploymentProvider, metadata *Meta
 // 5. If validation times out and SkipOnTimeout=true, log warning and proceed
 // 6. If validation times out and SkipOnTimeout=false, return error
 //
-// Validates: Requirements 1.1, 2.1, 2.2
 func (m *DeploymentManager) Deploy(ctx context.Context, req *interfaces.DeployRequest, metadata *interfaces.EndpointMetadata) (*interfaces.DeployResponse, error) {
 	if m.provider == nil {
 		return nil, fmt.Errorf("deployment provider not configured")
@@ -200,7 +199,6 @@ func (m *DeploymentManager) Deploy(ctx context.Context, req *interfaces.DeployRe
 // If the endpoint is UNHEALTHY due to image issues and the update is trying to scale up
 // without changing the image, the update will be blocked.
 // When the image is changed, the health status is reset to HEALTHY to allow new deployment.
-// Validates: Requirements 5.5
 func (m *DeploymentManager) Update(ctx context.Context, req *interfaces.UpdateDeploymentRequest) (*interfaces.DeployResponse, error) {
 	if m.provider == nil {
 		return nil, fmt.Errorf("deployment provider not configured")

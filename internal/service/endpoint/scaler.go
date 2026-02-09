@@ -45,7 +45,6 @@ func NewScalerManager(
 
 // ScaleUp increases replicas by delta.
 // Returns ErrEndpointBlockedDueToImageFailure if the endpoint is blocked due to image issues.
-// Validates: Requirements 5.5
 func (m *ScalerManager) ScaleUp(ctx context.Context, name string, delta int) error {
 	if delta <= 0 {
 		return fmt.Errorf("scale up delta must be positive")

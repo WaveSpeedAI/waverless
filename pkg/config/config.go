@@ -30,7 +30,6 @@ type Config struct {
 }
 
 // ImageValidationConfig contains configuration for image validation.
-// Validates: Requirements 8.1, 8.3, 8.4, 8.5
 type ImageValidationConfig struct {
 	// Enabled indicates whether image validation is enabled
 	// Environment variable: IMAGE_VALIDATION_ENABLED
@@ -50,7 +49,6 @@ type ImageValidationConfig struct {
 }
 
 // ResourceReleaserConfig contains configuration for the ResourceReleaser.
-// Validates: Requirements 8.1, 8.2, 8.5
 type ResourceReleaserConfig struct {
 	// ImagePullTimeout is the maximum time to wait for image pull before terminating the worker.
 	// Default: 5 minutes
@@ -316,7 +314,6 @@ func applyEnvOverrides(cfg *Config) {
 
 // validateAndApplyDefaults validates configuration values and applies defaults for invalid values.
 // This implements Property 9: Configuration Fallback to Defaults from the design document.
-// Validates: Requirements 8.5
 func validateAndApplyDefaults(cfg *Config) {
 	defaults := DefaultImageValidationConfig()
 	releaserDefaults := DefaultResourceReleaserConfig()

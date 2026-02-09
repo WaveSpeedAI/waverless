@@ -58,7 +58,6 @@ func NewManager(
 // SetEndpointService sets the endpoint service on the callback handler for status summary updates.
 // This must be called after NewManager and before any provider registration to ensure
 // status summary updates are triggered on worker status changes.
-// Validates: Requirement 4.3
 func (m *Manager) SetEndpointService(svc *endpointsvc.Service) {
 	m.callbackHandler.SetEndpointService(svc)
 }

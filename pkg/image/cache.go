@@ -42,7 +42,6 @@ func DefaultCacheConfig() *CacheConfig {
 // Cache key format: image:validation:{sha256(image)}
 // This ensures consistent key length and avoids special characters in keys.
 //
-// Validates: Requirements 2.5
 type ImageValidationCache struct {
 	// In-memory cache (fallback when Redis is unavailable)
 	mu    sync.RWMutex
@@ -123,7 +122,6 @@ func generateCacheKey(image string) string {
 // It first tries Redis (if configured), then falls back to in-memory cache.
 // Returns nil if the image is not in the cache or has expired.
 //
-// Validates: Requirements 2.5
 func (c *ImageValidationCache) Get(image string) *interfaces.ImageValidationResult {
 	// Try Redis first if available
 	if c.redisClient != nil {
@@ -190,7 +188,6 @@ func (c *ImageValidationCache) getFromMemory(image string) *interfaces.ImageVali
 // It stores in both Redis (if configured) and in-memory cache.
 // If ttl is 0, the default TTL from configuration is used.
 //
-// Validates: Requirements 2.5
 func (c *ImageValidationCache) Set(image string, result *interfaces.ImageValidationResult, ttl time.Duration) {
 	if ttl == 0 {
 		ttl = c.config.DefaultTTL

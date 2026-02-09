@@ -3,7 +3,6 @@
 //
 // Feature: endpoint-status-tracking, Property 2: Phase Transition Event Recording
 // Feature: endpoint-status-tracking, Property 5: Status Event Filtering
-// **Validates: Requirements 1.4, 3.1, 3.2, 3.5**
 package service
 
 import (
@@ -270,7 +269,6 @@ func (t *testableStatusEventService) ListEvents(ctx context.Context, filter *Sta
 // within a reasonable tolerance of the actual change time.
 //
 // Feature: endpoint-status-tracking, Property 2: Phase Transition Event Recording
-// **Validates: Requirements 1.4, 3.1, 3.2**
 func TestProperty_PhaseTransitionEventRecording(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -522,7 +520,6 @@ func TestProperty_PhaseTransitionEventRecording(t *testing.T) {
 // and every returned event SHALL satisfy all filter conditions.
 //
 // Feature: endpoint-status-tracking, Property 5: Status Event Filtering
-// **Validates: Requirements 3.5**
 func TestProperty_StatusEventFiltering(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -810,7 +807,6 @@ func TestProperty_StatusEventFiltering(t *testing.T) {
 // - Order of filter criteria does not affect results
 //
 // Feature: endpoint-status-tracking, Property 5: Status Event Filtering
-// **Validates: Requirements 3.5**
 func TestProperty_StatusEventFilteringConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

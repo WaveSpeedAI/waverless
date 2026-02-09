@@ -15,7 +15,6 @@ import (
 
 // EndpointStatusSummary aggregates worker statuses for an endpoint.
 // This structure provides a comprehensive overview of the endpoint's health and status.
-// Validates: Requirement 4.2
 type EndpointStatusSummary struct {
 	// TotalWorkers is the total count of all workers for this endpoint.
 	TotalWorkers int `json:"totalWorkers"`
@@ -34,7 +33,6 @@ type EndpointStatusSummary struct {
 
 	// FailureDetails contains detailed information about each failed worker.
 	// This is omitted if there are no failed workers.
-	// Validates: Requirement 4.4
 	FailureDetails []WorkerFailureDetail `json:"failureDetails,omitempty"`
 
 	// SpotCapacity contains the current AWS Spot capacity status.
@@ -42,13 +40,11 @@ type EndpointStatusSummary struct {
 	SpotCapacity *status.SpotStatus `json:"spotCapacity,omitempty"`
 
 	// LastUpdated is the timestamp when this summary was last computed.
-	// Validates: Requirement 4.3
 	LastUpdated time.Time `json:"lastUpdated"`
 }
 
 // WorkerPendingDetail contains detailed information about a pending worker.
 // This provides visibility into why a specific worker is not yet ready.
-// Validates: Requirement 4.2
 type WorkerPendingDetail struct {
 	// WorkerID is the unique identifier of the worker.
 	WorkerID string `json:"workerId"`
@@ -71,7 +67,6 @@ type WorkerPendingDetail struct {
 
 // WorkerFailureDetail contains detailed information about a failed worker.
 // This provides visibility into what went wrong and how to potentially fix it.
-// Validates: Requirement 4.4
 type WorkerFailureDetail struct {
 	// WorkerID is the unique identifier of the worker.
 	WorkerID string `json:"workerId"`
@@ -235,7 +230,6 @@ func (s *Service) SetCapacityManager(mgr capacityManager) {
 // 5. Collect failed worker details (FailureDetails)
 // 6. If any worker is in WAITING_NODE phase, get Spot capacity status
 //
-// Validates: Requirements 4.1, 4.2, 4.3, 4.4
 func (s *Service) ComputeStatusSummary(ctx context.Context, endpoint string) (*EndpointStatusSummary, error) {
 	// Check if worker repository is configured
 	if s.statusSummaryDeps == nil || s.statusSummaryDeps.workerRepo == nil {
@@ -456,7 +450,6 @@ func (s *Service) SetEndpointRepository(repo *mysql.EndpointRepository) {
 // 2. Convert the summary to a map using ToMap()
 // 3. Call EndpointRepository.UpdateStatusSummary to persist the summary
 //
-// Validates: Requirements 4.3 - When any Worker status changes, the Waverless SHALL update the Endpoint_Status_Summary
 func (s *Service) UpdateStatusSummary(ctx context.Context, endpoint string) error {
 	// Compute the current status summary
 	summary, err := s.ComputeStatusSummary(ctx, endpoint)

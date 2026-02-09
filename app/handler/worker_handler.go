@@ -589,11 +589,13 @@ func (h *WorkerHandler) GetWorkerByID(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// getFailureSuggestion returns an actionable suggestion based on failure type and reason
-// Uses the status sanitizer to get user-friendly suggestions
+// workerStatusSanitizer is a package-level sanitizer reused across handler calls.
+// StatusSanitizer is stateless after construction, safe for concurrent read-only use.
+var workerStatusSanitizer = status.NewStatusSanitizer()
+
+// getFailureSuggestion returns an actionable suggestion based on failure type and reason.
 func getFailureSuggestion(failureType, failureReason string) string {
-	sanitizer := status.NewStatusSanitizer()
-	sanitized := sanitizer.Sanitize(interfaces.FailureType(failureType), failureReason, "")
+	sanitized := workerStatusSanitizer.Sanitize(interfaces.FailureType(failureType), failureReason, "")
 	if sanitized != nil {
 		return sanitized.Suggestion
 	}

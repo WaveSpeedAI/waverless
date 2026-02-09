@@ -94,7 +94,6 @@ func (m *mockDeploymentProvider) IsPodTerminating(ctx context.Context, podName s
 
 // TestDeploymentManager_Deploy_ImageFormatValidation tests that image format validation
 // is performed before deployment.
-// Validates: Requirements 1.1, 1.2
 func TestDeploymentManager_Deploy_ImageFormatValidation(t *testing.T) {
 	tests := []struct {
 		name        string

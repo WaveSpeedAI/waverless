@@ -11,7 +11,6 @@ import (
 
 // PendingPhaseDetector detects the specific phase of a pending pod.
 // It analyzes pod conditions and container statuses to determine why a pod is pending.
-// Validates: Requirements 1.1, 1.2, 1.3
 type PendingPhaseDetector struct {
 	// capacityManager is used to get Spot capacity information when phase is WAITING_NODE.
 	// This field is optional and can be nil if Spot status is not needed.
@@ -48,7 +47,6 @@ func NewPendingPhaseDetector(capacityManager CapacityManager) *PendingPhaseDetec
 // Returns:
 //   - *PendingPhaseInfo containing the detected phase, reason, message, and timestamp
 //
-// Validates: Requirements 1.1, 1.2, 1.3
 func (d *PendingPhaseDetector) DetectPhase(podInfo *interfaces.PodInfo, podConditions []interfaces.PodCondition) *PendingPhaseInfo {
 	now := time.Now()
 
@@ -63,13 +61,11 @@ func (d *PendingPhaseDetector) DetectPhase(podInfo *interfaces.PodInfo, podCondi
 	}
 
 	// Step 1: Check for Unschedulable condition → WAITING_NODE
-	// Validates: Requirement 1.2
 	if phase := d.detectWaitingNode(podConditions, now); phase != nil {
 		return phase
 	}
 
 	// Step 2: Check for ContainerCreating or ImagePullBackOff → PULLING_IMAGE
-	// Validates: Requirement 1.3
 	if phase := d.detectPullingImage(podInfo, now); phase != nil {
 		return phase
 	}
@@ -90,7 +86,6 @@ func (d *PendingPhaseDetector) DetectPhase(podInfo *interfaces.PodInfo, podCondi
 
 // detectWaitingNode checks if the pod is waiting for node scaling.
 // Returns WAITING_NODE phase if PodScheduled condition is False with reason "Unschedulable".
-// Validates: Requirement 1.2
 func (d *PendingPhaseDetector) detectWaitingNode(podConditions []interfaces.PodCondition, now time.Time) *PendingPhaseInfo {
 	for _, condition := range podConditions {
 		// Check for PodScheduled condition with status False and reason Unschedulable
@@ -125,7 +120,6 @@ func (d *PendingPhaseDetector) detectWaitingNode(podConditions []interfaces.PodC
 // detectPullingImage checks if the pod is pulling container images.
 // Returns PULLING_IMAGE phase if container status is Waiting with reason
 // "ContainerCreating" or "ImagePullBackOff".
-// Validates: Requirement 1.3
 func (d *PendingPhaseDetector) detectPullingImage(podInfo *interfaces.PodInfo, now time.Time) *PendingPhaseInfo {
 	// Check the pod's overall status and reason
 	// When a pod is in ContainerCreating or ImagePullBackOff state,

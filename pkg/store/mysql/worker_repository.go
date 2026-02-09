@@ -334,7 +334,6 @@ func (r *WorkerRepository) Delete(ctx context.Context, workerID string) error {
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 3.3, 3.4, 6.1, 6.2
 func (r *WorkerRepository) UpdateWorkerFailure(ctx context.Context, podName, failureType, failureReason, failureDetails string, occurredAt time.Time) error {
 	logger.InfoCtx(ctx, "UpdateWorkerFailure: attempting to update pod_name=%s, type=%s, reason=%s", podName, failureType, failureReason)
 

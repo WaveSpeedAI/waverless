@@ -17,7 +17,6 @@ func (m *mockCapacityManager) GetSpotStatus(instanceType string) *SpotStatus {
 
 // TestDetectPhase_Unschedulable_ReturnsWaitingNode tests that Unschedulable condition
 // results in WAITING_NODE phase.
-// Validates: Requirement 1.2
 func TestDetectPhase_Unschedulable_ReturnsWaitingNode(t *testing.T) {
 	detector := NewPendingPhaseDetector(nil)
 
@@ -48,7 +47,6 @@ func TestDetectPhase_Unschedulable_ReturnsWaitingNode(t *testing.T) {
 
 // TestDetectPhase_ContainerCreating_ReturnsPullingImage tests that ContainerCreating status
 // results in PULLING_IMAGE phase.
-// Validates: Requirement 1.3
 func TestDetectPhase_ContainerCreating_ReturnsPullingImage(t *testing.T) {
 	detector := NewPendingPhaseDetector(nil)
 
@@ -75,7 +73,6 @@ func TestDetectPhase_ContainerCreating_ReturnsPullingImage(t *testing.T) {
 
 // TestDetectPhase_ImagePullBackOff_ReturnsPullingImage tests that ImagePullBackOff status
 // results in PULLING_IMAGE phase.
-// Validates: Requirement 1.3
 func TestDetectPhase_ImagePullBackOff_ReturnsPullingImage(t *testing.T) {
 	detector := NewPendingPhaseDetector(nil)
 
@@ -188,7 +185,6 @@ func TestDetectPhase_NilPodInfo_ReturnsScheduling(t *testing.T) {
 
 // TestDetectPhase_WaitingNode_WithSpotStatus tests that WAITING_NODE phase includes
 // Spot status when capacity manager is available.
-// Validates: Requirement 2.4
 func TestDetectPhase_WaitingNode_WithSpotStatus(t *testing.T) {
 	spotStatus := NewSpotStatus(5, 0.50, "g4dn.xlarge")
 	mockCM := &mockCapacityManager{spotStatus: spotStatus}

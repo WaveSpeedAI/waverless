@@ -91,7 +91,6 @@ func (e *Executor) ExecuteDecisions(ctx context.Context, decisions []*ScaleDecis
 // scaleUp executes scale-up
 func (e *Executor) scaleUp(ctx context.Context, decision *ScaleDecision) error {
 	// Check if endpoint is blocked due to image failure (Property 8: Failed Endpoint Prevents New Pods)
-	// Validates: Requirements 5.5
 	if e.endpointRepo != nil {
 		blocked, reason, err := e.endpointRepo.IsBlockedDueToImageFailure(ctx, decision.Endpoint)
 		if err != nil {

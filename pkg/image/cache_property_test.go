@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 package image
 
 import (
@@ -29,7 +28,6 @@ import (
 // a new registry request.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CachedResultsReturnedOnSubsequentCalls(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -110,7 +108,6 @@ func TestProperty_CachedResultsReturnedOnSubsequentCalls(t *testing.T) {
 // Property: For any cached image, after the TTL expires, Get SHALL return nil.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheRespectsTTLExpiration(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -173,7 +170,6 @@ func TestProperty_CacheRespectsTTLExpiration(t *testing.T) {
 // Property: For any image string, generateCacheKey SHALL always return the same key.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheKeyGenerationIsDeterministic(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -237,7 +233,6 @@ func TestProperty_CacheKeyGenerationIsDeterministic(t *testing.T) {
 // in the same cached state.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheOperationsAreIdempotent(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -326,7 +321,6 @@ func TestProperty_CacheOperationsAreIdempotent(t *testing.T) {
 // from Redis or in-memory cache.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheWithRedisConsistency(t *testing.T) {
 	// Start miniredis for testing
 	mr, err := miniredis.Run()
@@ -412,7 +406,6 @@ func TestProperty_CacheWithRedisConsistency(t *testing.T) {
 // Property: Concurrent cache operations SHALL not cause data races or inconsistencies.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheConcurrentAccess(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 50 // Reduced for concurrent tests
@@ -526,7 +519,6 @@ func TestProperty_CacheConcurrentAccess(t *testing.T) {
 // Property: When TTL is 0, the cache SHALL use the configured default TTL.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheDefaultTTLBehavior(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -594,7 +586,6 @@ func TestProperty_CacheDefaultTTLBehavior(t *testing.T) {
 // Property: After Clear, all cached items SHALL be removed.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CacheClearBehavior(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -646,7 +637,6 @@ func TestProperty_CacheClearBehavior(t *testing.T) {
 // caching and retrieval.
 //
 // Feature: image-validation-and-status, Property 3: Image validation caching
-// **Validates: Requirements 2.5**
 func TestProperty_CachePreservesAllFields(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

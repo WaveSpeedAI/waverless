@@ -3,7 +3,6 @@
 //
 // Feature: image-validation-and-status
 // Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 package config
 
 import (
@@ -25,7 +24,6 @@ import (
 // the system SHALL use the default value and log a warning, ensuring the system remains operational.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_InvalidTimeoutFallsBackToDefault(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -83,7 +81,6 @@ func TestProperty_InvalidTimeoutFallsBackToDefault(t *testing.T) {
 // the default value.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_InvalidCacheDurationFallsBackToDefault(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -141,7 +138,6 @@ func TestProperty_InvalidCacheDurationFallsBackToDefault(t *testing.T) {
 // the default value.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_InvalidImagePullTimeoutFallsBackToDefault(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -201,7 +197,6 @@ func TestProperty_InvalidImagePullTimeoutFallsBackToDefault(t *testing.T) {
 // the default value.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_InvalidCheckIntervalFallsBackToDefault(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -261,7 +256,6 @@ func TestProperty_InvalidCheckIntervalFallsBackToDefault(t *testing.T) {
 // the default value.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_InvalidMaxRetriesFallsBackToDefault(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -321,7 +315,6 @@ func TestProperty_InvalidMaxRetriesFallsBackToDefault(t *testing.T) {
 // and NOT overwrite it with the default.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_ValidValuesArePreserved(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -451,7 +444,6 @@ func TestProperty_ValidValuesArePreserved(t *testing.T) {
 // SHALL produce the same result.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_ValidationIsDeterministic(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -514,7 +506,6 @@ func TestProperty_ValidationIsDeterministic(t *testing.T) {
 // the same result as applying it once.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_ValidationIsIdempotent(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -573,7 +564,6 @@ func TestProperty_ValidationIsIdempotent(t *testing.T) {
 // Property: When all configuration values are invalid, the system SHALL use all default values.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_AllInvalidValuesFallBackToDefaults(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -625,7 +615,6 @@ func TestProperty_AllInvalidValuesFallBackToDefaults(t *testing.T) {
 // preserve valid values and use defaults for invalid values.
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_MixedValidInvalidValues(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -716,7 +705,6 @@ func TestProperty_MixedValidInvalidValues(t *testing.T) {
 // SHALL always return valid configuration values (positive durations, non-negative retries).
 //
 // Feature: image-validation-and-status, Property 9: Configuration fallback to defaults
-// **Validates: Requirements 8.5**
 func TestProperty_DefaultFunctionsReturnValidValues(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

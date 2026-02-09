@@ -18,7 +18,6 @@ import (
 
 // ResourceReleaserConfig contains configuration for the ResourceReleaser.
 // These values can be configured via environment variables or config file.
-// Validates: Requirements 5.1, 8.1, 8.2
 type ResourceReleaserConfig struct {
 	// ImagePullTimeout is the maximum time to wait for image pull before terminating the worker.
 	// Default: 5 minutes
@@ -116,7 +115,6 @@ func NewResourceReleaser(
 // Parameters:
 //   - ctx: Context for cancellation
 //
-// Validates: Requirements 5.1, 5.2
 func (r *ResourceReleaser) Start(ctx context.Context) {
 	r.mu.Lock()
 	if r.running {
@@ -165,7 +163,6 @@ func (r *ResourceReleaser) Start(ctx context.Context) {
 // Parameters:
 //   - ctx: Context for database and provider operations
 //
-// Validates: Requirements 5.2, 5.3
 func (r *ResourceReleaser) CheckAndRelease(ctx context.Context) {
 	// Step 1: Get all workers with IMAGE_PULL_FAILED or CONTAINER_CRASH status
 	imagePullWorkers, err := r.workerRepo.GetWorkersByFailureType(ctx, string(interfaces.FailureTypeImagePull))
@@ -491,7 +488,6 @@ func (r *ResourceReleaser) checkWaitingNodeWorkers(ctx context.Context, affected
 // Returns:
 //   - error if the database operations fail
 //
-// Validates: Requirements 5.4, 5.5, 6.4
 func (r *ResourceReleaser) UpdateEndpointHealthStatus(ctx context.Context, endpoint string) error {
 	// Get all active workers for this endpoint (excludes OFFLINE)
 	workers, err := r.workerRepo.GetByEndpoint(ctx, endpoint)
@@ -582,7 +578,7 @@ func (r *ResourceReleaser) UpdateEndpointHealthStatus(ctx context.Context, endpo
 
 // cleanupTrackedWorkers removes workers from tracking that are no longer in failed state.
 func (r *ResourceReleaser) cleanupTrackedWorkers(ctx context.Context) {
-	r.failedWorkers.Range(func(key, value interface{}) bool {
+	r.failedWorkers.Range(func(key, value any) bool {
 		workerID := key.(string)
 
 		// Check if worker still exists and is still in failed state
@@ -618,7 +614,7 @@ func (r *ResourceReleaser) GetConfig() *ResourceReleaserConfig {
 // GetTrackedWorkerCount returns the number of workers currently being tracked.
 func (r *ResourceReleaser) GetTrackedWorkerCount() int {
 	count := 0
-	r.failedWorkers.Range(func(key, value interface{}) bool {
+	r.failedWorkers.Range(func(key, value any) bool {
 		count++
 		return true
 	})

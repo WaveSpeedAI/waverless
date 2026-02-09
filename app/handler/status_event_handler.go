@@ -16,7 +16,6 @@ import (
 
 // StatusEventHandler handles status event API requests.
 // It provides endpoints for listing status events by endpoint or worker.
-// Validates: Requirements 3.4, 3.5
 type StatusEventHandler struct {
 	service *service.StatusEventService
 }
@@ -34,17 +33,17 @@ func NewStatusEventHandler(service *service.StatusEventService) *StatusEventHand
 
 // StatusEventResponse represents a status event in API responses.
 type StatusEventResponse struct {
-	ID         int64                  `json:"id"`
-	WorkerID   string                 `json:"workerId"`
-	Endpoint   string                 `json:"endpoint"`
-	EventType  string                 `json:"eventType"`
-	OldStatus  string                 `json:"oldStatus,omitempty"`
-	NewStatus  string                 `json:"newStatus"`
-	Phase      string                 `json:"phase,omitempty"`
-	Reason     string                 `json:"reason,omitempty"`
-	Message    string                 `json:"message,omitempty"`
-	SpotStatus map[string]interface{} `json:"spotStatus,omitempty"`
-	CreatedAt  string                 `json:"createdAt"`
+	ID         int64          `json:"id"`
+	WorkerID   string         `json:"workerId"`
+	Endpoint   string         `json:"endpoint"`
+	EventType  string         `json:"eventType"`
+	OldStatus  string         `json:"oldStatus,omitempty"`
+	NewStatus  string         `json:"newStatus"`
+	Phase      string         `json:"phase,omitempty"`
+	Reason     string         `json:"reason,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	SpotStatus map[string]any `json:"spotStatus,omitempty"`
+	CreatedAt  string         `json:"createdAt"`
 }
 
 // ListStatusEvents lists status events for an endpoint.
@@ -174,7 +173,7 @@ func toStatusEventResponse(event *service.StatusEvent) StatusEventResponse {
 
 	// Convert SpotStatus to map
 	if event.SpotStatus != nil {
-		response.SpotStatus = map[string]interface{}{
+		response.SpotStatus = map[string]any{
 			"capacity":     string(event.SpotStatus.Capacity),
 			"score":        event.SpotStatus.Score,
 			"price":        event.SpotStatus.Price,

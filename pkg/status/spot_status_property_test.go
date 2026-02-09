@@ -2,7 +2,6 @@
 // These tests verify universal properties that should hold across all valid inputs.
 //
 // Feature: endpoint-status-tracking, Property 3: Spot Capacity Classification
-// **Validates: Requirements 2.3**
 package status
 
 import (
@@ -23,7 +22,6 @@ import (
 // This classification SHALL be deterministic and consistent.
 //
 // Feature: endpoint-status-tracking, Property 3: Spot Capacity Classification
-// **Validates: Requirements 2.3**
 func TestProperty_SpotCapacityClassification(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -130,7 +128,6 @@ func TestProperty_SpotCapacityClassification(t *testing.T) {
 // - Boundary scores (4, 7) → correct classification
 //
 // Feature: endpoint-status-tracking, Property 3: Spot Capacity Classification
-// **Validates: Requirements 2.3**
 func TestProperty_SpotCapacityEdgeCases(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -196,7 +193,6 @@ func TestProperty_SpotCapacityEdgeCases(t *testing.T) {
 // - The classification is monotonically non-decreasing with score
 //
 // Feature: endpoint-status-tracking, Property 3: Spot Capacity Classification
-// **Validates: Requirements 2.3**
 func TestProperty_SpotCapacityConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

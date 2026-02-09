@@ -2,7 +2,6 @@
 // These tests verify universal properties that should hold across all valid inputs.
 //
 // Feature: endpoint-status-tracking, Property 1: Pending Phase Classification
-// **Validates: Requirements 1.1, 1.2, 1.3**
 package status
 
 import (
@@ -29,7 +28,6 @@ import (
 // - Otherwise, the phase SHALL be SCHEDULING
 //
 // Feature: endpoint-status-tracking, Property 1: Pending Phase Classification
-// **Validates: Requirements 1.1, 1.2, 1.3**
 func TestProperty_PendingPhaseClassification(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -66,7 +64,6 @@ func TestProperty_PendingPhaseClassification(t *testing.T) {
 	))
 
 	// Property 1c: Unschedulable condition always results in WAITING_NODE
-	// Validates: Requirement 1.2
 	properties.Property("unschedulable condition always results in WAITING_NODE", prop.ForAll(
 		func(podInfo *interfaces.PodInfo, otherConditions []interfaces.PodCondition, message string) bool {
 			// Create conditions with Unschedulable
@@ -89,7 +86,6 @@ func TestProperty_PendingPhaseClassification(t *testing.T) {
 	))
 
 	// Property 1d: ContainerCreating reason always results in PULLING_IMAGE (when not unschedulable)
-	// Validates: Requirement 1.3
 	properties.Property("ContainerCreating reason results in PULLING_IMAGE when not unschedulable", prop.ForAll(
 		func(podName, message string) bool {
 			podInfo := &interfaces.PodInfo{
@@ -119,7 +115,6 @@ func TestProperty_PendingPhaseClassification(t *testing.T) {
 	))
 
 	// Property 1e: ImagePullBackOff reason always results in PULLING_IMAGE (when not unschedulable)
-	// Validates: Requirement 1.3
 	properties.Property("ImagePullBackOff reason results in PULLING_IMAGE when not unschedulable", prop.ForAll(
 		func(podName, message string) bool {
 			podInfo := &interfaces.PodInfo{
@@ -261,7 +256,6 @@ func TestProperty_PendingPhaseClassification(t *testing.T) {
 // 4. Default → SCHEDULING (lowest priority)
 //
 // Feature: endpoint-status-tracking, Property 1: Pending Phase Classification
-// **Validates: Requirements 1.1, 1.2, 1.3**
 func TestProperty_PendingPhasePriorityOrder(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -372,7 +366,6 @@ func TestProperty_PendingPhasePriorityOrder(t *testing.T) {
 // phases from container statuses in addition to pod-level information.
 //
 // Feature: endpoint-status-tracking, Property 1: Pending Phase Classification
-// **Validates: Requirements 1.1, 1.2, 1.3**
 func TestProperty_PendingPhaseFromPodDetail(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -553,7 +546,6 @@ func TestProperty_PendingPhaseFromPodDetail(t *testing.T) {
 // - A non-zero Since timestamp
 //
 // Feature: endpoint-status-tracking, Property 1: Pending Phase Classification
-// **Validates: Requirements 1.1, 1.2, 1.3**
 func TestProperty_PendingPhaseInfoFields(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

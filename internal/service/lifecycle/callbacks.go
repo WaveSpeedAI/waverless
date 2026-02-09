@@ -55,7 +55,6 @@ func NewCallbackHandler(
 
 // SetEndpointService sets the endpoint service for status summary updates.
 // This enables automatic status summary recomputation when worker status changes.
-// Validates: Requirement 4.3
 func (h *CallbackHandler) SetEndpointService(svc *endpointsvc.Service) {
 	h.endpointService = svc
 }
@@ -92,7 +91,6 @@ func (h *CallbackHandler) recordSpotPrice(podName, endpoint string) {
 
 // triggerStatusSummaryUpdate triggers an async status summary update for the given endpoint.
 // This is called after any worker status change to keep the endpoint status summary current.
-// Validates: Requirement 4.3
 func (h *CallbackHandler) triggerStatusSummaryUpdate(endpoint string) {
 	if h.endpointService == nil {
 		return
@@ -163,7 +161,6 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	}
 
 	// Trigger status summary update for the endpoint
-	// Validates: Requirement 4.3
 	h.triggerStatusSummaryUpdate(endpoint)
 }
 
@@ -193,7 +190,7 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 	maxRetries := 3
 	retryInterval := 500 * time.Millisecond
 
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		err := h.workerRepo.MarkOfflineByPodName(h.ctx, podName)
 		if err != nil {
 			logger.WarnCtx(h.ctx, "Failed to mark worker offline for deleted pod %s (attempt %d/%d): %v",
@@ -210,7 +207,6 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 		if worker != nil && worker.Status == "OFFLINE" {
 			logger.InfoCtx(h.ctx, "Successfully marked worker %s as OFFLINE", podName)
 			// Trigger status summary update for the endpoint
-			// Validates: Requirement 4.3
 			h.triggerStatusSummaryUpdate(endpoint)
 			return
 		}
@@ -227,7 +223,6 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 		podName, maxRetries)
 
 	// Trigger status summary update for the endpoint (even if marking offline failed)
-	// Validates: Requirement 4.3
 	h.triggerStatusSummaryUpdate(endpoint)
 }
 
@@ -299,7 +294,6 @@ func (h *CallbackHandler) HandleWorkerFailure(event *provider.WorkerFailureEvent
 	}
 
 	// Trigger status summary update for the endpoint
-	// Validates: Requirement 4.3
 	h.triggerStatusSummaryUpdate(endpoint)
 }
 

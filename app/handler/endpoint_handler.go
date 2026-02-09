@@ -664,6 +664,7 @@ func (h *EndpointHandler) GetEndpointWorkers(c *gin.Context) {
 	}
 
 	result := make([]WorkerWithPodInfo, 0, len(workers))
+	sanitizer := status.NewStatusSanitizer()
 
 	for _, worker := range workers {
 		// Parse jobs_in_progress JSON
@@ -695,8 +696,6 @@ func (h *EndpointHandler) GetEndpointWorkers(c *gin.Context) {
 		if worker.FailureType != "" {
 			workerWithPod.FailureType = worker.FailureType
 			workerWithPod.FailureReason = worker.FailureReason
-			// Get suggestion using status sanitizer
-			sanitizer := status.NewStatusSanitizer()
 			sanitized := sanitizer.Sanitize(interfaces.FailureType(worker.FailureType), worker.FailureReason, "")
 			if sanitized != nil {
 				workerWithPod.FailureSuggestion = sanitized.Suggestion
@@ -793,6 +792,7 @@ func (h *EndpointHandler) GetEndpointWorkersForSync(c *gin.Context) {
 	}
 
 	result := make([]WorkerWithPodInfo, 0, len(workers))
+	sanitizer := status.NewStatusSanitizer()
 
 	for _, worker := range workers {
 		// Parse jobs_in_progress JSON
@@ -830,8 +830,6 @@ func (h *EndpointHandler) GetEndpointWorkersForSync(c *gin.Context) {
 		if worker.FailureType != "" {
 			workerWithPod.FailureType = worker.FailureType
 			workerWithPod.FailureReason = worker.FailureReason
-			// Get suggestion using status sanitizer
-			sanitizer := status.NewStatusSanitizer()
 			sanitized := sanitizer.Sanitize(interfaces.FailureType(worker.FailureType), worker.FailureReason, "")
 			if sanitized != nil {
 				workerWithPod.FailureSuggestion = sanitized.Suggestion

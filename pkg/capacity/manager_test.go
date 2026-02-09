@@ -81,7 +81,6 @@ func TestSpotStatusClassification(t *testing.T) {
 
 // TestManagerImplementsCapacityManagerInterface verifies that Manager implements
 // the CapacityManager interface defined in the status package.
-// Validates: Requirement 2.4
 func TestManagerImplementsCapacityManagerInterface(t *testing.T) {
 	// This test verifies at compile time that Manager implements CapacityManager
 	var _ status.CapacityManager = (*Manager)(nil)

@@ -104,7 +104,6 @@ var simpleImageRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$`)
 //
 // Returns nil if the format is valid, otherwise returns an error with a descriptive message.
 //
-// Validates: Requirements 1.1, 1.2, 1.3
 func (v *ImageValidator) ValidateImageFormat(image string) error {
 	// Check for empty string
 	if image == "" {
@@ -347,7 +346,6 @@ func validateRepositoryComponent(component string) error {
 // 3. Request token with user credentials
 // 4. Retry manifest request with token
 //
-// Validates: Requirements 2.1, 2.2, 2.3
 func (v *ImageValidator) CheckImageExists(ctx context.Context, image string, cred *interfaces.RegistryCredential) (*interfaces.ImageValidationResult, error) {
 	// First validate the format
 	if err := v.ValidateImageFormat(image); err != nil {

@@ -30,7 +30,6 @@ const (
 
 // StatusEvent represents a status change event in the service layer.
 // This is the domain model used by the service, separate from the database model.
-// Validates: Requirement 3.2
 type StatusEvent struct {
 	ID         int64              `json:"id"`
 	WorkerID   string             `json:"workerId"`
@@ -47,7 +46,6 @@ type StatusEvent struct {
 
 // StatusEventFilter defines query filters for status events.
 // Supports filtering by endpoint, worker_id, event type, and time range.
-// Validates: Requirement 3.5
 type StatusEventFilter struct {
 	// Endpoint filters events by endpoint name.
 	Endpoint string
@@ -67,7 +65,6 @@ type StatusEventFilter struct {
 
 // StatusEventService manages status event recording and querying.
 // It provides methods to record new events and list events with filters.
-// Validates: Requirements 3.1, 3.2, 3.5
 type StatusEventService struct {
 	repo            *mysql.StatusEventRepository
 	pendingDetector *status.PendingPhaseDetector
@@ -88,7 +85,6 @@ func NewStatusEventService(repo *mysql.StatusEventRepository, pendingDetector *s
 
 // RecordEvent records a new status event.
 // The event is persisted to the database with the current timestamp if not set.
-// Validates: Requirements 3.1, 3.2
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -127,7 +123,6 @@ func (s *StatusEventService) RecordEvent(ctx context.Context, event *StatusEvent
 
 // ListEvents lists status events with filters.
 // Events are returned in descending order by creation time (most recent first).
-// Validates: Requirement 3.5
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -155,7 +150,6 @@ func (s *StatusEventService) ListEvents(ctx context.Context, filter *StatusEvent
 
 // ListEventsByEndpoint lists status events for a specific endpoint.
 // This is a convenience method that wraps ListEvents with an endpoint filter.
-// Validates: Requirement 3.5
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -175,7 +169,6 @@ func (s *StatusEventService) ListEventsByEndpoint(ctx context.Context, endpoint 
 
 // ListEventsByWorker lists status events for a specific worker.
 // This is a convenience method that wraps ListEvents with a worker filter.
-// Validates: Requirement 3.5
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -195,7 +188,6 @@ func (s *StatusEventService) ListEventsByWorker(ctx context.Context, workerID st
 
 // RecordStatusChange records a status change event.
 // This is a convenience method for recording STATUS_CHANGE events.
-// Validates: Requirements 3.1, 3.2
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -223,7 +215,6 @@ func (s *StatusEventService) RecordStatusChange(ctx context.Context, workerID, e
 
 // RecordPhaseChange records a pending phase change event.
 // This is a convenience method for recording PHASE_CHANGE events.
-// Validates: Requirements 1.4, 3.1, 3.2
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -252,7 +243,6 @@ func (s *StatusEventService) RecordPhaseChange(ctx context.Context, workerID, en
 
 // RecordFailure records a failure event.
 // This is a convenience method for recording FAILURE events.
-// Validates: Requirements 3.1, 3.2
 //
 // Parameters:
 //   - ctx: The context for the operation.
@@ -277,7 +267,6 @@ func (s *StatusEventService) RecordFailure(ctx context.Context, workerID, endpoi
 
 // RecordRecovery records a recovery event.
 // This is a convenience method for recording RECOVERY events.
-// Validates: Requirements 3.1, 3.2
 //
 // Parameters:
 //   - ctx: The context for the operation.

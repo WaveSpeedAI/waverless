@@ -2,7 +2,6 @@
 // These tests verify universal properties that should hold across all valid inputs.
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
 package endpoint
 
 import (
@@ -26,7 +25,6 @@ import (
 // - The summary SHALL be updated whenever any worker's status changes
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
 func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -35,7 +33,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	properties := gopter.NewProperties(parameters)
 
 	// Property 6a: total_workers equals the count of all workers added via AddWorkerStatus
-	// Validates: Requirement 4.1
 	properties.Property("total_workers equals count of all workers added", prop.ForAll(
 		func(statuses []string) bool {
 			summary := NewEndpointStatusSummary()
@@ -50,7 +47,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6b: workers_by_status sums to total_workers
-	// Validates: Requirement 4.2
 	properties.Property("workers_by_status sums to total_workers", prop.ForAll(
 		func(statuses []string) bool {
 			summary := NewEndpointStatusSummary()
@@ -71,7 +67,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6c: workers_by_phase counts are independent of workers_by_status
-	// Validates: Requirement 4.2
 	properties.Property("workers_by_phase counts are tracked independently", prop.ForAll(
 		func(phases []status.PendingPhase) bool {
 			summary := NewEndpointStatusSummary()
@@ -92,7 +87,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6d: AddWorkerStatus correctly increments both TotalWorkers and status count
-	// Validates: Requirement 4.1
 	properties.Property("AddWorkerStatus correctly increments counters", prop.ForAll(
 		func(statusName string, count int) bool {
 			summary := NewEndpointStatusSummary()
@@ -109,7 +103,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6e: AddWorkerPhase correctly increments phase count
-	// Validates: Requirement 4.2
 	properties.Property("AddWorkerPhase correctly increments phase count", prop.ForAll(
 		func(phase status.PendingPhase, count int) bool {
 			summary := NewEndpointStatusSummary()
@@ -125,7 +118,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6f: failure_details contains all added failure information
-	// Validates: Requirement 4.4
 	properties.Property("failure_details contains all added failures", prop.ForAll(
 		func(failures []WorkerFailureDetail) bool {
 			summary := NewEndpointStatusSummary()
@@ -153,7 +145,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6g: pending_details contains all added pending information
-	// Validates: Requirement 4.2
 	properties.Property("pending_details contains all added pending workers", prop.ForAll(
 		func(pendingDetails []WorkerPendingDetail) bool {
 			summary := NewEndpointStatusSummary()
@@ -181,7 +172,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6h: HasFailedWorkers returns true iff there are failure details
-	// Validates: Requirement 4.4
 	properties.Property("HasFailedWorkers returns true iff there are failures", prop.ForAll(
 		func(failures []WorkerFailureDetail) bool {
 			summary := NewEndpointStatusSummary()
@@ -196,7 +186,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 	))
 
 	// Property 6i: HasPendingWorkers returns true iff there are pending details
-	// Validates: Requirement 4.2
 	properties.Property("HasPendingWorkers returns true iff there are pending workers", prop.ForAll(
 		func(pendingDetails []WorkerPendingDetail) bool {
 			summary := NewEndpointStatusSummary()
@@ -237,7 +226,6 @@ func TestProperty_EndpointStatusSummaryComputation(t *testing.T) {
 // aggregate all information while maintaining consistency between counts and details.
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
 func TestProperty_EndpointStatusSummaryMixedWorkers(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -353,7 +341,6 @@ func TestProperty_EndpointStatusSummaryMixedWorkers(t *testing.T) {
 // that preserves all information for JSON storage.
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
 func TestProperty_EndpointStatusSummaryToMap(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -516,7 +503,6 @@ func TestProperty_EndpointStatusSummaryToMap(t *testing.T) {
 // Property: Helper methods SHALL correctly report the state of the summary.
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
 func TestProperty_EndpointStatusSummaryHelperMethods(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -605,7 +591,6 @@ func TestProperty_EndpointStatusSummaryHelperMethods(t *testing.T) {
 // Property: Constructor functions SHALL correctly initialize all fields.
 //
 // Feature: endpoint-status-tracking, Property 6: Endpoint Status Summary Computation
-// **Validates: Requirements 4.2, 4.4**
 func TestProperty_NewWorkerDetailConstructors(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

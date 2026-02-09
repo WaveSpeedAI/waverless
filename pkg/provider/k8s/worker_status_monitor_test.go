@@ -9,7 +9,6 @@ import (
 // TestClassifyK8sFailure tests the ClassifyK8sFailure method.
 // It verifies that K8s-specific error reasons are correctly mapped to generic FailureTypes.
 //
-// Validates: Requirements 3.2, 6.2
 func TestClassifyK8sFailure(t *testing.T) {
 	monitor := &K8sWorkerStatusMonitor{}
 

@@ -32,7 +32,6 @@ type StatusEventRecorder interface {
 // Usage: Use DetectFailure() and UpdateWorkerFailure() within an existing pod watcher
 // (setupPodStatusWatcher in initializers.go) to avoid duplicate callbacks.
 //
-// Validates: Requirements 1.4, 3.1, 3.2, 3.3
 type K8sWorkerStatusMonitor struct {
 	manager             *Manager
 	workerRepo          *mysql.WorkerRepository
@@ -69,7 +68,6 @@ func NewK8sWorkerStatusMonitor(manager *Manager, workerRepo *mysql.WorkerReposit
 
 // WithStatusEventRecorder sets the status event recorder for recording status events.
 // This enables the monitor to record status change, phase change, and failure events.
-// Validates: Requirements 1.4, 3.1
 func (m *K8sWorkerStatusMonitor) WithStatusEventRecorder(recorder StatusEventRecorder) *K8sWorkerStatusMonitor {
 	m.statusEventRecorder = recorder
 	return m
@@ -77,7 +75,6 @@ func (m *K8sWorkerStatusMonitor) WithStatusEventRecorder(recorder StatusEventRec
 
 // WithPendingPhaseDetector sets the pending phase detector for detecting pending phases.
 // This enables the monitor to detect and record pending phase changes.
-// Validates: Requirements 1.1, 1.2, 1.3
 func (m *K8sWorkerStatusMonitor) WithPendingPhaseDetector(detector *status.PendingPhaseDetector) *K8sWorkerStatusMonitor {
 	m.pendingDetector = detector
 	return m
@@ -98,7 +95,6 @@ func (m *K8sWorkerStatusMonitor) WithPendingPhaseDetector(detector *status.Pendi
 // (e.g., scale-down, manual deletion) and should NOT be marked as failures.
 // The "Error" reason during termination is expected K8s behavior, not a crash.
 //
-// Validates: Requirements 3.2, 3.3
 func (m *K8sWorkerStatusMonitor) DetectFailure(info *interfaces.PodInfo) *interfaces.WorkerFailureInfo {
 	if info == nil {
 		return nil
@@ -195,7 +191,6 @@ func isFailureState(reason, status string) bool {
 // Returns:
 //   - The corresponding FailureType
 //
-// Validates: Requirements 3.2, 6.2
 func (m *K8sWorkerStatusMonitor) ClassifyK8sFailure(reason, message string) interfaces.FailureType {
 	// Normalize reason for comparison
 	reasonLower := strings.ToLower(reason)
@@ -281,14 +276,13 @@ func (m *K8sWorkerStatusMonitor) ClassifyK8sFailure(reason, message string) inte
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 3.3, 3.4
 func (m *K8sWorkerStatusMonitor) UpdateWorkerFailure(ctx context.Context, podName, endpoint string, info *interfaces.WorkerFailureInfo) error {
 	if m.workerRepo == nil || info == nil {
 		return nil
 	}
 
 	// Build failure details JSON
-	details := map[string]interface{}{
+	details := map[string]any{
 		"type":         string(info.Type),
 		"reason":       info.Reason,
 		"message":      info.Message,
@@ -328,7 +322,6 @@ func (m *K8sWorkerStatusMonitor) GetSanitizer() *status.StatusSanitizer {
 //   - info: The current pod information
 //   - podConditions: The pod conditions (optional, for pending phase detection)
 //
-// Validates: Requirements 1.4, 3.1
 func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName, endpoint string, info *interfaces.PodInfo, podConditions []interfaces.PodCondition) {
 	if info == nil {
 		return
@@ -373,7 +366,6 @@ func (m *K8sWorkerStatusMonitor) HandleStatusChange(ctx context.Context, podName
 
 // handlePendingPhaseChange detects and records pending phase changes.
 // Uses a single Lock to prevent duplicate events from concurrent goroutines.
-// Validates: Requirements 1.4, 3.1
 func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, podName, endpoint string, info *interfaces.PodInfo, podConditions []interfaces.PodCondition) {
 	// Detect the current pending phase
 	phaseInfo := m.pendingDetector.DetectPhase(info, podConditions)
@@ -412,7 +404,6 @@ func (m *K8sWorkerStatusMonitor) handlePendingPhaseChange(ctx context.Context, p
 //   - endpoint: The endpoint name
 //   - failureInfo: The failure information
 //
-// Validates: Requirements 3.1
 func (m *K8sWorkerStatusMonitor) HandleFailure(ctx context.Context, podName, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
 	if failureInfo == nil || m.statusEventRecorder == nil {
 		return

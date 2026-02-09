@@ -160,7 +160,6 @@ func (r *EndpointRepository) GetBySpecName(ctx context.Context, specName string)
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 5.4, 6.3, 6.4
 func (r *EndpointRepository) UpdateHealthStatus(ctx context.Context, endpointName, healthStatus, healthMessage string) error {
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -217,7 +216,6 @@ func (r *EndpointRepository) GetByHealthStatus(ctx context.Context, healthStatus
 //   - reason: the reason for blocking (empty if not blocked)
 //   - error: if the database query fails
 //
-// Validates: Requirements 5.5
 func (r *EndpointRepository) IsBlockedDueToImageFailure(ctx context.Context, endpointName string) (blocked bool, reason string, err error) {
 	endpoint, err := r.Get(ctx, endpointName)
 	if err != nil {
@@ -284,7 +282,6 @@ func findSubstring(s, substr string) bool {
 // Returns:
 //   - error if the database update fails
 //
-// Validates: Requirements 4.3 - When any Worker status changes, the Waverless SHALL update the Endpoint_Status_Summary
 func (r *EndpointRepository) UpdateStatusSummary(ctx context.Context, endpointName string, statusSummary map[string]any) error {
 	now := time.Now()
 	updates := map[string]any{

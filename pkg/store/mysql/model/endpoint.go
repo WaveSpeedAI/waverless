@@ -35,7 +35,6 @@ type Endpoint struct {
 	HealthMessage     *string    `gorm:"column:health_message;type:varchar(512)" json:"health_message,omitempty"`
 	LastHealthCheckAt *time.Time `gorm:"column:last_health_check_at;type:datetime(3)" json:"last_health_check_at,omitempty"`
 	// Status summary fields for aggregated worker status information
-	// Validates: Requirement 6.2 - Endpoint model shall include status_summary (JSON field containing aggregated status)
 	StatusSummary       JSONMap    `gorm:"column:status_summary;type:json" json:"status_summary,omitempty"`
 	LastStatusSummaryAt *time.Time `gorm:"column:last_status_summary_at;type:datetime(3)" json:"last_status_summary_at,omitempty"`
 	CreatedAt           time.Time  `gorm:"column:created_at;type:datetime(3);not null;default:CURRENT_TIMESTAMP(3);index:idx_created_at" json:"created_at"`

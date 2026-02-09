@@ -341,7 +341,6 @@ func (m *Manager) ReportFailure(ctx context.Context, specName, reason string) {
 // This method implements the status.CapacityManager interface.
 // If instanceType is empty, it returns nil (no specific instance type to look up).
 // If Spot information is not available for the instance type, it returns nil.
-// Validates: Requirement 2.4
 func (m *Manager) GetSpotStatus(instanceType string) *status.SpotStatus {
 	if m.repo == nil {
 		return nil
@@ -399,7 +398,6 @@ func (m *Manager) GetSpotStatus(instanceType string) *status.SpotStatus {
 
 // GetSpotStatusBySpec returns the current Spot capacity status for the given spec name.
 // This is a convenience method when you know the spec name instead of instance type.
-// Validates: Requirement 2.4
 func (m *Manager) GetSpotStatusBySpec(specName string) *status.SpotStatus {
 	if m.repo == nil || specName == "" {
 		return nil
