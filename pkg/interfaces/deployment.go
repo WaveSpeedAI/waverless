@@ -307,6 +307,7 @@ type PodInfo struct {
 	NodeName          string            `json:"nodeName,omitempty"`
 	CreatedAt         string            `json:"createdAt"`
 	StartedAt         string            `json:"startedAt,omitempty"`
+	ReadyAt           string            `json:"readyAt,omitempty"`           // Time when worker became ready (from provider API)
 	DeletionTimestamp string            `json:"deletionTimestamp,omitempty"` // Set when pod is terminating
 	Labels            map[string]string `json:"labels,omitempty"`
 	RestartCount      int32             `json:"restartCount"`

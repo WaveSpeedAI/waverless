@@ -105,11 +105,15 @@ type PortDetails struct {
 
 // WorkerInfo represents individual worker information
 type WorkerInfo struct {
-	ID      string    `json:"id"`      // Worker ID
-	State   StateInfo `json:"state"`   // Worker state
-	Log     string    `json:"log"`     // Log path
-	Metrics string    `json:"metrics"` // Metrics path
-	Healthy bool      `json:"healthy"` // Health status
+	ID        string    `json:"id"`                  // Worker ID
+	State     StateInfo `json:"state"`               // Worker state (state: running/removed)
+	Log       string    `json:"log"`                 // Log path
+	Metrics   string    `json:"metrics"`             // Metrics path
+	Healthy   bool      `json:"healthy"`             // Health status
+	Drain     bool      `json:"drain"`               // Whether worker is marked for draining
+	CreatedAt string    `json:"createdAt,omitempty"` // Worker creation time (billing start, empty means no billing)
+	ReadyAt   string    `json:"readyAt,omitempty"`   // Worker health check passed time
+	DeletedAt string    `json:"deletedAt,omitempty"` // Worker deletion time (billing stop)
 }
 
 // HealthCheckDetails represents health check configuration in Get Endpoint response

@@ -118,7 +118,7 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	info := event.PodInfo
 
 	// Parse timestamps
-	var createdAt, startedAt *time.Time
+	var createdAt, startedAt, readyAt *time.Time
 	if info.CreatedAt != "" {
 		if t, err := time.Parse(time.RFC3339, info.CreatedAt); err == nil {
 			createdAt = &t
@@ -127,6 +127,11 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	if info.StartedAt != "" {
 		if t, err := time.Parse(time.RFC3339, info.StartedAt); err == nil {
 			startedAt = &t
+		}
+	}
+	if info.ReadyAt != "" {
+		if t, err := time.Parse(time.RFC3339, info.ReadyAt); err == nil {
+			readyAt = &t
 		}
 	}
 
@@ -143,7 +148,7 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	isNewWorker := existingWorker == nil
 
 	// Create or update Worker
-	if err := h.workerRepo.UpsertFromPod(h.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt); err != nil {
+	if err := h.workerRepo.UpsertFromPod(h.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt, readyAt); err != nil {
 		logger.WarnCtx(h.ctx, "Failed to upsert worker from pod %s: %v", podName, err)
 		return
 	}
@@ -191,7 +196,12 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 	retryInterval := 500 * time.Millisecond
 
 	for i := range maxRetries {
-		err := h.workerRepo.MarkOfflineByPodName(h.ctx, podName)
+		var err error
+		if event.DeletedAt != nil {
+			err = h.workerRepo.MarkOfflineByPodName(h.ctx, podName, *event.DeletedAt)
+		} else {
+			err = h.workerRepo.MarkOfflineByPodName(h.ctx, podName)
+		}
 		if err != nil {
 			logger.WarnCtx(h.ctx, "Failed to mark worker offline for deleted pod %s (attempt %d/%d): %v",
 				podName, i+1, maxRetries, err)

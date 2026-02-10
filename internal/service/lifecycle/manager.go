@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"waverless/internal/service"
 	endpointsvc "waverless/internal/service/endpoint"
@@ -228,10 +229,11 @@ func (m *Manager) createNovitaCallbacks() *novita.NovitaLifecycleCallbacks {
 				PodInfo:  podInfo,
 			})
 		},
-		OnWorkerDelete: func(workerID, endpoint string) {
+		OnWorkerDelete: func(workerID, endpoint string, deletedAt *time.Time) {
 			m.callbackHandler.HandleWorkerDelete(&provider.WorkerDeleteEvent{
-				WorkerID: workerID,
-				Endpoint: endpoint,
+				WorkerID:  workerID,
+				Endpoint:  endpoint,
+				DeletedAt: deletedAt,
 			})
 		},
 		OnWorkerDraining: func(workerID, endpoint, reason string) {

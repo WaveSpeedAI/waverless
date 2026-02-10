@@ -3,6 +3,7 @@ package provider
 
 import (
 	"fmt"
+	"time"
 
 	"waverless/pkg/interfaces"
 )
@@ -52,8 +53,9 @@ type WorkerStatusEvent struct {
 
 // WorkerDeleteEvent represents a worker delete event
 type WorkerDeleteEvent struct {
-	WorkerID string // Worker ID
-	Endpoint string // Endpoint name
+	WorkerID  string     // Worker ID
+	Endpoint  string     // Endpoint name
+	DeletedAt *time.Time // Actual deletion time from provider API (nil = use time.Now())
 }
 
 // WorkerDrainingEvent represents a worker draining event

@@ -103,6 +103,7 @@ const (
 	NovitaStatusCreating = "creating"
 	NovitaStatusUpdating = "updating"
 	NovitaStatusDeleting = "deleting"
+	NovitaStatusRemoved  = "removed" // Worker has been deleted, retained for 10 minutes
 
 	// Environment variable keys
 	EnvKeyNovitaProvider = "NOVITA_PROVIDER"
@@ -275,10 +276,13 @@ func mapNovitaResponseToAppInfo(resp *GetEndpointResponse) *interfaces.AppInfo {
 	var replicas, readyReplicas, availableReplicas int32
 	replicas = int32(endpoint.WorkerConfig.MaxNum)
 
-	// Count running and healthy workers
+	// Count running and healthy workers (exclude removed workers)
 	runningWorkers := 0
 	healthyWorkers := 0
 	for _, worker := range endpoint.Workers {
+		if worker.State.State == NovitaStatusRemoved {
+			continue
+		}
 		if worker.State.State == NovitaStatusRunning {
 			runningWorkers++
 		}
@@ -355,6 +359,9 @@ func mapNovitaStatusToAppStatus(endpointName string, data *EndpointConfig) *inte
 	healthyWorkers := 0
 	pendingWorkers := 0
 	for _, worker := range data.Workers {
+		if worker.State.State == NovitaStatusRemoved {
+			continue // Skip removed workers
+		}
 		switch worker.State.State {
 		case NovitaStatusRunning:
 			runningWorkers++
@@ -395,6 +402,8 @@ func mapNovitaStatusToWaverless(state string) string {
 		return StatusUpdating
 	case NovitaStatusDeleting:
 		return StatusTerminating
+	case NovitaStatusRemoved:
+		return StatusStopped
 	default:
 		return StatusUnknown
 	}
