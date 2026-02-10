@@ -345,13 +345,28 @@ func (e *DecisionEngine) shouldScaleDown(ctx context.Context, ep *EndpointConfig
 	}
 
 	// 3. Check idle time
-	if ep.LastTaskTime.IsZero() {
-		// Never processed tasks, can scale down
+	// 🔥 FIX: For workers that never processed tasks, we should NOT immediately scale down
+	// They might still be starting up. Use endpoint creation time or last scale time as baseline.
+	var idleBaseline time.Time
+	if !ep.LastTaskTime.IsZero() {
+		idleBaseline = ep.LastTaskTime
+	} else if !ep.LastScaleTime.IsZero() {
+		// Never processed tasks, use last scale time as baseline
+		// This gives new workers time to start up before being considered "idle"
+		idleBaseline = ep.LastScaleTime
 	} else {
-		idleDuration := time.Since(ep.LastTaskTime)
-		if idleDuration.Seconds() < float64(ep.ScaleDownIdleTime) {
-			return nil // Idle time threshold not reached yet
-		}
+		// No baseline available, skip scale down for safety
+		// This prevents scaling down workers that just started
+		logger.DebugCtx(ctx, "endpoint %s: skip scale down, no idle baseline (never processed tasks, no scale history)",
+			ep.Name)
+		return nil
+	}
+
+	idleDuration := time.Since(idleBaseline)
+	if idleDuration.Seconds() < float64(ep.ScaleDownIdleTime) {
+		logger.DebugCtx(ctx, "endpoint %s: skip scale down, idle time not reached (idle=%.0fs, threshold=%ds)",
+			ep.Name, idleDuration.Seconds(), ep.ScaleDownIdleTime)
+		return nil // Idle time threshold not reached yet
 	}
 
 	// 4. Check cooldown time
@@ -367,15 +382,6 @@ func (e *DecisionEngine) shouldScaleDown(ctx context.Context, ep *EndpointConfig
 
 	// 5. Determine scale-down amount
 	var desiredReplicas int
-	var idleDuration time.Duration
-
-	// 🔥 FIX: If LastTaskTime is zero, set a safe default value
-	if ep.LastTaskTime.IsZero() {
-		// Never processed tasks, use current time as baseline
-		idleDuration = 0
-	} else {
-		idleDuration = time.Since(ep.LastTaskTime)
-	}
 
 	doubleIdleTime := time.Duration(ep.ScaleDownIdleTime*2) * time.Second
 
