@@ -467,6 +467,24 @@ func (p *NovitaDeploymentProvider) UpdateDeployment(ctx context.Context, req *in
 		return nil, fmt.Errorf("failed to get current endpoint config: %w", err)
 	}
 
+	// Check if this is a scale down operation (replicas decreasing)
+	// If so, drain workers first before updating
+	if req.Replicas != nil {
+		currentReplicas := currentConfig.Endpoint.WorkerConfig.MinNum
+		newReplicas := *req.Replicas
+		if newReplicas < currentReplicas {
+			numToDrain := currentReplicas - newReplicas
+			logger.Infof("Update involves scale down for endpoint %s: %d -> %d, draining %d workers first",
+				req.Endpoint, currentReplicas, newReplicas, numToDrain)
+
+			drainedWorkerIDs, err := p.drainWorkersForScaleDown(ctx, &currentConfig.Endpoint, numToDrain)
+			if err != nil {
+				return nil, fmt.Errorf("failed to drain workers for scale down: %w", err)
+			}
+			logger.Infof("Drained %d workers for endpoint %s: %v", len(drainedWorkerIDs), req.Endpoint, drainedWorkerIDs)
+		}
+	}
+
 	// Map update request
 	updateReq := mapUpdateRequestToNovita(endpointID, req, currentConfig)
 	if updateReq == nil {
@@ -746,25 +764,30 @@ func (p *NovitaDeploymentProvider) processWorkerState(endpoint string, worker *W
 
 	workerID := worker.ID
 
-	// Handle removed workers: emit a final status update with real deletedAt,
-	// then let detectDeletedWorkers handle the delete callback.
-	// We don't store removed workers in workerStates, and they are excluded
-	// from currentWorkerIDs, so detectDeletedWorkers will fire for them.
+	// Handle removed workers: notify delete callback
+	// notifyWorkerDelete handler is idempotent
 	if worker.State.State == NovitaStatusRemoved {
-		// Only process if we previously knew about this worker
-		if _, exists := p.workerStates.Load(workerID); exists {
-			// Parse deletedAt for accurate terminated_at
-			var deletedAt *time.Time
-			if worker.DeletedAt != "" {
-				if t, err := time.Parse(time.RFC3339, worker.DeletedAt); err == nil {
-					deletedAt = &t
-				}
+		// Parse deletedAt for accurate terminated_at
+		var deletedAt *time.Time
+		if worker.DeletedAt != "" {
+			if t, err := time.Parse(time.RFC3339, worker.DeletedAt); err == nil {
+				deletedAt = &t
 			}
-			// Send a final status update with the real timestamps
+		}
+
+		// Only send status update if we were tracking this worker
+		// For removed workers we haven't seen before, just notify delete
+		if _, wasTracked := p.workerStates.Load(workerID); wasTracked {
 			p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, nil))
-			// Remove from cache and notify delete with real deletedAt
 			p.workerStates.Delete(workerID)
+		}
+
+		// Always notify delete - handler is idempotent
+		if deletedAt != nil {
 			p.notifyWorkerDelete(workerID, endpoint, deletedAt)
+		} else {
+			now := time.Now()
+			p.notifyWorkerDelete(workerID, endpoint, &now)
 		}
 		return
 	}
@@ -1085,6 +1108,12 @@ func (p *NovitaDeploymentProvider) ensureRegistryAuth(ctx context.Context, cred 
 		return "", fmt.Errorf("registry credential is nil")
 	}
 
+	// Build registry auth name (max 255 characters for Novita API)
+	respRegisterName := cred.Registry + cred.Username
+	if len(respRegisterName) > 255 {
+		respRegisterName = respRegisterName[:255]
+	}
+
 	// List existing registry auths
 	listResp, err := p.client.ListRegistryAuths(ctx)
 	if err != nil {
@@ -1092,16 +1121,16 @@ func (p *NovitaDeploymentProvider) ensureRegistryAuth(ctx context.Context, cred 
 	}
 	// Check if auth already exists by matching registry name
 	for _, auth := range listResp.Data {
-		if auth.Name == cred.Registry {
-			logger.Infof("Found existing registry auth for %s (ID: %s)", cred.Registry, auth.ID)
+		if auth.Name == respRegisterName {
+			logger.Infof("Found existing registry auth for %s (ID: %s)", respRegisterName, auth.ID)
 			return auth.ID, nil
 		}
 	}
 
 	// Auth doesn't exist, create new one
-	logger.Infof("Creating new registry auth for %s", cred.Registry)
+	logger.Infof("Creating new registry auth for %s", respRegisterName)
 	createReq := &CreateRegistryAuthRequest{
-		Name:     cred.Registry,
+		Name:     respRegisterName,
 		Username: cred.Username,
 		Password: cred.Password,
 	}

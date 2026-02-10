@@ -184,7 +184,14 @@ func (h *CallbackHandler) HandleWorkerDelete(event *provider.WorkerDeleteEvent) 
 	podName := event.WorkerID
 	endpoint := event.Endpoint
 
-	// Record WORKER_OFFLINE event
+	// Check if worker is already OFFLINE (idempotency check)
+	existingWorker, _ := h.workerRepo.GetByPodName(h.ctx, endpoint, podName)
+	if existingWorker != nil && existingWorker.Status == "OFFLINE" {
+		logger.InfoCtx(h.ctx, "Worker %s already OFFLINE, skipping duplicate delete event", podName)
+		return
+	}
+
+	// Record WORKER_OFFLINE event (only if not already offline)
 	if h.workerEventService != nil {
 		h.workerEventService.RecordWorkerOffline(h.ctx, podName, endpoint, podName)
 	}

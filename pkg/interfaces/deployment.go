@@ -177,6 +177,10 @@ type DeployRequest struct {
 	EnablePtrace       bool                `json:"enablePtrace,omitempty"`  // Enable SYS_PTRACE capability for debugging (only for fixed resource pools)
 	ValidateImage      *bool               `json:"validateImage,omitempty"` // Whether to validate image before deployment (default: use config)
 	RegistryCredential *RegistryCredential `json:"registryCredential,omitempty"`
+
+	// min/max  other provider need
+	MinReplicas int `json:"minReplicas,omitempty"` // Minimum replica count (default 0)
+	MaxReplicas int `json:"maxReplicas,omitempty"` // Maximum replica count (default 10)
 }
 
 // RegistryCredential for private container registries

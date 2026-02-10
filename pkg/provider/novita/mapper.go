@@ -161,10 +161,10 @@ func mapDeployRequestToNovita(req *interfaces.DeployRequest, spec *interfaces.Sp
 	if err != nil {
 		return nil, err
 	}
-	gpuNum, err := strconv.ParseInt(spec.Resources.GPU, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse GPU number: %w", err)
-	}
+	// gpuNum, err := strconv.ParseInt(spec.Resources.GPU, 10, 64)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to parse GPU number: %w", err)
+	// }
 	rootfsSize, err := strconv.ParseInt(spec.Resources.EphemeralStorage, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse rootfs size from '%s': %w", spec.Resources.EphemeralStorage, err)
@@ -175,7 +175,7 @@ func mapDeployRequestToNovita(req *interfaces.DeployRequest, spec *interfaces.Sp
 		MaxNum:         req.Replicas, // Initially set to same as min
 		FreeTimeout:    DefaultFreeTimeout,
 		MaxConcurrent:  DefaultMaxConcurrent,
-		GPUNum:         int(gpuNum),
+		GPUNum:         req.GpuCount,
 		RequestTimeout: DefaultRequestTimeout,
 	}
 

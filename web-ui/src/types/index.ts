@@ -105,6 +105,13 @@ export interface PVCInfo {
   createdAt: string;
 }
 
+// Registry credential for private container registries
+export interface RegistryCredential {
+  registry: string; // e.g., "docker.io", "ghcr.io"
+  username: string;
+  password: string;
+}
+
 export interface DeployRequest {
   endpoint: string;
   specName: string;
@@ -118,6 +125,8 @@ export interface DeployRequest {
   volumeMounts?: VolumeMount[];
   shmSize?: string; // Shared memory size (e.g., "1Gi", "512Mi")
   enablePtrace?: boolean; // Enable SYS_PTRACE capability (only for fixed resource pools)
+  validateImage?: boolean; // Whether to validate image before deployment
+  registryCredential?: RegistryCredential; // Registry credential for private images
   // Auto-scaling configuration (optional)
   minReplicas?: number;
   maxReplicas?: number;

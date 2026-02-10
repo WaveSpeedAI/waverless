@@ -246,9 +246,9 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 
 	// Part 1: From WORKER_TASK_PULLED events in [from, to) - clip to window boundary
 	var eventIdleStats struct {
-		SumIdleMs int64 `gorm:"column:sum_idle_ms"`
-		MaxIdleMs int64 `gorm:"column:max_idle_ms"`
-		Count     int   `gorm:"column:count"`
+		SumIdleMs float64 `gorm:"column:sum_idle_ms"`
+		MaxIdleMs float64 `gorm:"column:max_idle_ms"`
+		Count     int     `gorm:"column:count"`
 	}
 	r.ds.DB(ctx).Raw(`
 		SELECT 
@@ -292,12 +292,12 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 		AND TIMESTAMPDIFF(MICROSECOND, event_time, ?) / 1000 + idle_duration_ms > 0
 	`, from, from, endpoint, to, to.Add(2*time.Minute), to).Scan(&futureIdleMs)
 
-	totalIdleMs := eventIdleStats.SumIdleMs + currentIdleMs + futureIdleMs
+	totalIdleMs := int64(eventIdleStats.SumIdleMs) + currentIdleMs + futureIdleMs
 	if totalIdleMs > windowMs*int64(workerStats.TotalWorkers) && workerStats.TotalWorkers > 0 {
 		totalIdleMs = windowMs * int64(workerStats.TotalWorkers) // Cap at max possible
 	}
 
-	var maxIdleMs int64 = eventIdleStats.MaxIdleMs
+	var maxIdleMs int64 = int64(eventIdleStats.MaxIdleMs)
 	if currentIdleMs > maxIdleMs {
 		maxIdleMs = currentIdleMs
 	}
@@ -340,7 +340,7 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 	r.ds.DB(ctx).Raw(`
 		SELECT 
 			COUNT(CASE WHEN event_type = 'WORKER_REGISTERED' THEN 1 END) as created,
-			COUNT(CASE WHEN event_type = 'WORKER_OFFLINE' THEN 1 END) as terminated
+			COUNT(CASE WHEN event_type = 'WORKER_OFFLINE' THEN 1 END) as `+"`terminated`"+`
 		FROM worker_events 
 		WHERE endpoint = ? AND event_time >= ? AND event_time < ?
 	`, endpoint, from, to).Scan(&lifecycleStats)
