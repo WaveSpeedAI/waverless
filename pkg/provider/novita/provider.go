@@ -52,16 +52,19 @@ type workerState struct {
 	Endpoint  string
 	State     string
 	Healthy   bool
-	CreatedAt *time.Time // First time worker was discovered (for billing start approximation)
-	StartedAt *time.Time // Time when worker state became "running" (billing start)
-	ReadyAt   *time.Time // Time when worker became healthy and running (ready to accept tasks)
+	Drain     bool       // Whether worker is marked for draining (from Novita API)
+	CreatedAt *time.Time // Worker creation time from Novita API (billing start)
+	StartedAt *time.Time // Same as CreatedAt for Novita (kept for PodInfo compatibility)
+	ReadyAt   *time.Time // Worker health check passed time from Novita API
+	DeletedAt *time.Time // Worker deletion time from Novita API (billing stop)
 }
 
 // WorkerStatusChangeCallback is called when a worker's status changes
 type WorkerStatusChangeCallback func(workerID, endpoint string, info *interfaces.PodInfo)
 
 // WorkerDeleteCallback is called when a worker is deleted
-type WorkerDeleteCallback func(workerID, endpoint string)
+// deletedAt is the actual deletion time from the provider API (nil = unknown)
+type WorkerDeleteCallback func(workerID, endpoint string, deletedAt *time.Time)
 
 // NovitaDeploymentProvider implements interfaces.DeploymentProvider for Novita Serverless
 type NovitaDeploymentProvider struct {
@@ -364,18 +367,27 @@ func (p *NovitaDeploymentProvider) drainWorkersForScaleDown(ctx context.Context,
 
 // selectWorkersToDrain selects workers to drain for scale down operation
 // Selection strategy:
-// 1. Prefer non-healthy workers
-// 2. Prefer workers that are not in running state
-// 3. If all workers are healthy and running, select any workers
+// 1. Skip workers already marked as draining
+// 2. Prefer non-healthy workers
+// 3. Prefer workers that are not in running state
+// 4. If all workers are healthy and running, select any workers
 func (p *NovitaDeploymentProvider) selectWorkersToDrain(workers []WorkerInfo, numToDrain int) []WorkerInfo {
-	if numToDrain >= len(workers) {
-		// Drain all workers
-		return workers
+	// Filter out already-draining and removed workers
+	var candidates []WorkerInfo
+	for _, w := range workers {
+		if w.Drain || w.State.State == NovitaStatusRemoved {
+			continue
+		}
+		candidates = append(candidates, w)
+	}
+
+	if numToDrain >= len(candidates) {
+		return candidates
 	}
 
 	// Separate workers into categories
 	var nonHealthy, notRunning, healthyRunning []WorkerInfo
-	for _, w := range workers {
+	for _, w := range candidates {
 		if !w.Healthy {
 			nonHealthy = append(nonHealthy, w)
 		} else if w.State.State != NovitaStatusRunning {
@@ -453,6 +465,24 @@ func (p *NovitaDeploymentProvider) UpdateDeployment(ctx context.Context, req *in
 	currentConfig, err := p.client.GetEndpoint(ctx, endpointID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current endpoint config: %w", err)
+	}
+
+	// Check if this is a scale down operation (replicas decreasing)
+	// If so, drain workers first before updating
+	if req.Replicas != nil {
+		currentReplicas := currentConfig.Endpoint.WorkerConfig.MinNum
+		newReplicas := *req.Replicas
+		if newReplicas < currentReplicas {
+			numToDrain := currentReplicas - newReplicas
+			logger.Infof("Update involves scale down for endpoint %s: %d -> %d, draining %d workers first",
+				req.Endpoint, currentReplicas, newReplicas, numToDrain)
+
+			drainedWorkerIDs, err := p.drainWorkersForScaleDown(ctx, &currentConfig.Endpoint, numToDrain)
+			if err != nil {
+				return nil, fmt.Errorf("failed to drain workers for scale down: %w", err)
+			}
+			logger.Infof("Drained %d workers for endpoint %s: %v", len(drainedWorkerIDs), req.Endpoint, drainedWorkerIDs)
+		}
 	}
 
 	// Map update request
@@ -621,7 +651,11 @@ func (p *NovitaDeploymentProvider) pollEndpointStates(ctx context.Context) {
 
 		// Process worker-level changes
 		for _, worker := range item.Workers {
-			currentWorkerIDs[worker.ID] = true
+			// Don't count removed workers as "current" — let detectDeletedWorkers
+			// handle them via the workerStates cache miss path
+			if worker.State.State != NovitaStatusRemoved {
+				currentWorkerIDs[worker.ID] = true
+			}
 			p.processWorkerState(endpointName, &worker)
 		}
 	}
@@ -642,17 +676,16 @@ func (p *NovitaDeploymentProvider) getEndpointStateFromListItem(item *EndpointLi
 	// Get desired replicas from worker config
 	desiredReplicas := item.WorkerConfig.MaxNum
 
-	// Count workers by state
+	// Count workers by state (exclude removed workers)
 	runningWorkers := 0
-	// healthyWorkers := 0
 
 	for _, worker := range item.Workers {
+		if worker.State.State == NovitaStatusRemoved {
+			continue // Skip removed workers
+		}
 		if worker.State.State == NovitaStatusRunning {
 			runningWorkers++
 		}
-		// if worker.Healthy {
-		// 	healthyWorkers++
-		// }
 	}
 
 	// Use running workers as ready replicas and available replicas
@@ -730,74 +763,101 @@ func (p *NovitaDeploymentProvider) processWorkerState(endpoint string, worker *W
 	}
 
 	workerID := worker.ID
-	now := time.Now()
 
-	previousStateInterface, exists := p.workerStates.Load(workerID)
-
-	if !exists {
-		// New worker - record creation time and trigger status change callback
-		currentState := &workerState{
-			ID:        workerID,
-			Endpoint:  endpoint,
-			State:     worker.State.State,
-			Healthy:   worker.Healthy,
-			CreatedAt: &now, // Record when we first discovered this worker
+	// Handle removed workers: notify delete callback
+	// notifyWorkerDelete handler is idempotent
+	if worker.State.State == NovitaStatusRemoved {
+		// Parse deletedAt for accurate terminated_at
+		var deletedAt *time.Time
+		if worker.DeletedAt != "" {
+			if t, err := time.Parse(time.RFC3339, worker.DeletedAt); err == nil {
+				deletedAt = &t
+			}
 		}
 
-		// If worker is already running, record started time
-		if worker.State.State == NovitaStatusRunning {
-			currentState.StartedAt = &now
+		// Only send status update if we were tracking this worker
+		// For removed workers we haven't seen before, just notify delete
+		if _, wasTracked := p.workerStates.Load(workerID); wasTracked {
+			p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, nil))
+			p.workerStates.Delete(workerID)
 		}
 
-		// If worker is already healthy and running, record ready time
-		if worker.Healthy && worker.State.State == NovitaStatusRunning {
-			currentState.ReadyAt = &now
+		// Always notify delete - handler is idempotent
+		if deletedAt != nil {
+			p.notifyWorkerDelete(workerID, endpoint, deletedAt)
+		} else {
+			now := time.Now()
+			p.notifyWorkerDelete(workerID, endpoint, &now)
 		}
-
-		p.workerStates.Store(workerID, currentState)
-		logger.Infof("New worker detected: %s (endpoint: %s, state: %s, createdAt: %s)",
-			workerID, endpoint, worker.State.State, now.Format(time.RFC3339))
-		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
 		return
 	}
 
-	previousState := previousStateInterface.(*workerState)
+	// Parse timestamps from Novita API response
+	var apiCreatedAt, apiReadyAt, apiDeletedAt *time.Time
+	if worker.CreatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, worker.CreatedAt); err == nil {
+			apiCreatedAt = &t
+		} else {
+			logger.Warnf("Failed to parse worker createdAt '%s': %v", worker.CreatedAt, err)
+		}
+	}
+	if worker.ReadyAt != "" {
+		if t, err := time.Parse(time.RFC3339, worker.ReadyAt); err == nil {
+			apiReadyAt = &t
+		}
+	}
+	if worker.DeletedAt != "" {
+		if t, err := time.Parse(time.RFC3339, worker.DeletedAt); err == nil {
+			apiDeletedAt = &t
+		}
+	}
 
-	// Build current state, preserving timestamps from previous state
+	previousStateInterface, exists := p.workerStates.Load(workerID)
+
 	currentState := &workerState{
 		ID:        workerID,
 		Endpoint:  endpoint,
 		State:     worker.State.State,
 		Healthy:   worker.Healthy,
-		CreatedAt: previousState.CreatedAt, // Preserve creation time
-		StartedAt: previousState.StartedAt, // Preserve started time
-		ReadyAt:   previousState.ReadyAt,   // Preserve ready time
+		Drain:     worker.Drain,
+		CreatedAt: apiCreatedAt,
+		StartedAt: apiCreatedAt, // Use createdAt as startedAt for PodInfo compatibility
+		ReadyAt:   apiReadyAt,
+		DeletedAt: apiDeletedAt,
 	}
 
-	// Record started time when state transitions to running (only once)
-	if currentState.StartedAt == nil && worker.State.State == NovitaStatusRunning {
-		currentState.StartedAt = &now
-		logger.Infof("Worker %s started running: startedAt=%s (endpoint: %s)",
-			workerID, now.Format(time.RFC3339), endpoint)
-	}
-
-	// Record ready time when worker becomes healthy and running (only once)
-	if currentState.ReadyAt == nil && worker.Healthy && worker.State.State == NovitaStatusRunning {
-		currentState.ReadyAt = &now
-		logger.Infof("Worker %s is now ready: readyAt=%s (endpoint: %s)",
-			workerID, now.Format(time.RFC3339), endpoint)
-	}
-
-	if p.hasWorkerStateChanged(previousState, currentState) {
-		// State changed - trigger status change callback
+	if !exists {
+		// New worker discovered
 		p.workerStates.Store(workerID, currentState)
-		logger.Infof("Worker state changed: %s (endpoint: %s, state: %s -> %s)",
-			workerID, endpoint, previousState.State, currentState.State)
+		logger.Infof("New worker detected: %s (endpoint: %s, state: %s, createdAt: %v, readyAt: %v, drain: %v)",
+			workerID, endpoint, worker.State.State, worker.CreatedAt, worker.ReadyAt, worker.Drain)
 		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
-	} else if currentState.StartedAt != previousState.StartedAt || currentState.ReadyAt != previousState.ReadyAt {
-		// Timestamps changed but state didn't - still update cache and notify
-		p.workerStates.Store(workerID, currentState)
+
+		// If worker is already in drain state when first discovered, notify draining
+		if worker.Drain {
+			p.notifyWorkerDraining(workerID, endpoint)
+		}
+		return
+	}
+
+	previousState := previousStateInterface.(*workerState)
+
+	stateChanged := p.hasWorkerStateChanged(previousState, currentState)
+	drainChanged := previousState.Drain != currentState.Drain
+
+	// Always update cache
+	p.workerStates.Store(workerID, currentState)
+
+	if stateChanged {
+		logger.Infof("Worker state changed: %s (endpoint: %s, state: %s -> %s, drain: %v)",
+			workerID, endpoint, previousState.State, currentState.State, currentState.Drain)
 		p.notifyWorkerStatusChange(workerID, endpoint, p.workerToPodInfo(worker, currentState))
+	}
+
+	// Detect drain state change
+	if drainChanged && currentState.Drain {
+		logger.Infof("Worker %s drain state changed to true (endpoint: %s)", workerID, endpoint)
+		p.notifyWorkerDraining(workerID, endpoint)
 	}
 }
 
@@ -806,16 +866,19 @@ func (p *NovitaDeploymentProvider) hasWorkerStateChanged(previous, current *work
 	return previous.State != current.State || previous.Healthy != current.Healthy
 }
 
-// detectDeletedWorkers detects workers that have been deleted
+// detectDeletedWorkers detects workers that have been deleted.
+// A worker is considered deleted when it was in workerStates cache but is no longer
+// in currentWorkerIDs. This covers two cases:
+// 1. Worker disappeared from API response entirely (after 10min removed TTL)
+// 2. Worker transitioned to "removed" state (excluded from currentWorkerIDs in pollEndpointStates)
 func (p *NovitaDeploymentProvider) detectDeletedWorkers(currentWorkerIDs map[string]bool) {
 	p.workerStates.Range(func(key, value interface{}) bool {
 		workerID := key.(string)
 		if !currentWorkerIDs[workerID] {
 			state := value.(*workerState)
-			// Worker has been deleted
 			logger.Infof("Worker deleted: %s (endpoint: %s)", workerID, state.Endpoint)
 			p.workerStates.Delete(workerID)
-			p.notifyWorkerDelete(workerID, state.Endpoint)
+			p.notifyWorkerDelete(workerID, state.Endpoint, state.DeletedAt)
 		}
 		return true
 	})
@@ -844,17 +907,31 @@ func (p *NovitaDeploymentProvider) workerToPodInfo(worker *WorkerInfo, state ...
 		info.Message = "Worker is healthy and running"
 	}
 
-	// Add timestamps if state is provided
+	// Use API-provided timestamps directly (no more self-calculation)
+	if worker.CreatedAt != "" {
+		info.CreatedAt = worker.CreatedAt
+		info.StartedAt = worker.CreatedAt // Use createdAt as startedAt for billing
+	}
+	if worker.ReadyAt != "" {
+		info.ReadyAt = worker.ReadyAt
+	}
+	if worker.DeletedAt != "" {
+		info.DeletionTimestamp = worker.DeletedAt
+	}
+
+	// Override with parsed state timestamps if available (they come from the same API data)
 	if len(state) > 0 && state[0] != nil {
 		ws := state[0]
 		if ws.CreatedAt != nil {
 			info.CreatedAt = ws.CreatedAt.Format(time.RFC3339)
-		}
-		if ws.StartedAt != nil {
 			info.StartedAt = ws.StartedAt.Format(time.RFC3339)
 		}
-		// Note: PodInfo doesn't have a ReadyAt field, but we pass StartedAt
-		// The caller (UpsertFromPod) will handle pod_ready_at based on Ready status
+		if ws.ReadyAt != nil {
+			info.ReadyAt = ws.ReadyAt.Format(time.RFC3339)
+		}
+		if ws.DeletedAt != nil {
+			info.DeletionTimestamp = ws.DeletedAt.Format(time.RFC3339)
+		}
 	}
 
 	return info
@@ -883,7 +960,7 @@ func (p *NovitaDeploymentProvider) notifyWorkerStatusChange(workerID, endpoint s
 }
 
 // notifyWorkerDelete notifies all registered callbacks about worker deletion
-func (p *NovitaDeploymentProvider) notifyWorkerDelete(workerID, endpoint string) {
+func (p *NovitaDeploymentProvider) notifyWorkerDelete(workerID, endpoint string, deletedAt *time.Time) {
 	p.workerDeleteCallbacksLock.RLock()
 	callbacks := make([]WorkerDeleteCallback, 0, len(p.workerDeleteCallbacks))
 	for _, cb := range p.workerDeleteCallbacks {
@@ -899,9 +976,27 @@ func (p *NovitaDeploymentProvider) notifyWorkerDelete(workerID, endpoint string)
 					logger.Errorf("Panic in worker delete callback: %v", r)
 				}
 			}()
-			cb(workerID, endpoint)
+			cb(workerID, endpoint, deletedAt)
 		}()
 	}
+}
+
+// notifyWorkerDraining notifies draining callbacks when Novita API reports drain=true
+func (p *NovitaDeploymentProvider) notifyWorkerDraining(workerID, endpoint string) {
+	// Mark in Redis for IsPodTerminating check
+	if err := p.MarkWorkerDraining(context.Background(), workerID); err != nil {
+		logger.Warnf("Failed to mark worker %s as draining in Redis: %v", workerID, err)
+	}
+
+	// Trigger worker status change with draining info so lifecycle callbacks can handle it
+	p.notifyWorkerStatusChange(workerID, endpoint, &interfaces.PodInfo{
+		Name:              workerID,
+		Phase:             "draining",
+		Status:            StatusTerminating,
+		Reason:            "Draining",
+		Message:           "Worker is marked for draining by Novita",
+		DeletionTimestamp: time.Now().Format(time.RFC3339),
+	})
 }
 
 // WatchPodStatusChange registers a callback to observe worker status changes
@@ -1013,6 +1108,12 @@ func (p *NovitaDeploymentProvider) ensureRegistryAuth(ctx context.Context, cred 
 		return "", fmt.Errorf("registry credential is nil")
 	}
 
+	// Build registry auth name (max 255 characters for Novita API)
+	respRegisterName := cred.Registry + cred.Username
+	if len(respRegisterName) > 255 {
+		respRegisterName = respRegisterName[:255]
+	}
+
 	// List existing registry auths
 	listResp, err := p.client.ListRegistryAuths(ctx)
 	if err != nil {
@@ -1020,16 +1121,16 @@ func (p *NovitaDeploymentProvider) ensureRegistryAuth(ctx context.Context, cred 
 	}
 	// Check if auth already exists by matching registry name
 	for _, auth := range listResp.Data {
-		if auth.Name == cred.Registry {
-			logger.Infof("Found existing registry auth for %s (ID: %s)", cred.Registry, auth.ID)
+		if auth.Name == respRegisterName {
+			logger.Infof("Found existing registry auth for %s (ID: %s)", respRegisterName, auth.ID)
 			return auth.ID, nil
 		}
 	}
 
 	// Auth doesn't exist, create new one
-	logger.Infof("Creating new registry auth for %s", cred.Registry)
+	logger.Infof("Creating new registry auth for %s", respRegisterName)
 	createReq := &CreateRegistryAuthRequest{
-		Name:     cred.Registry,
+		Name:     respRegisterName,
 		Username: cred.Username,
 		Password: cred.Password,
 	}
@@ -1089,10 +1190,18 @@ const providerName = "novita"
 
 // IsPodTerminating checks if a worker is in draining state (being scaled down)
 // This is called by WorkerService.PullJob to prevent dispatching tasks to draining workers
-// Uses Redis for multi-replica safe state management
+// Uses Redis for multi-replica safe state management, and also checks Novita API drain flag
 func (p *NovitaDeploymentProvider) IsPodTerminating(ctx context.Context, podName string) (bool, error) {
 	if podName == "" {
 		return false, nil
+	}
+
+	// Check Novita API drain state from cache
+	if stateInterface, ok := p.workerStates.Load(podName); ok {
+		state := stateInterface.(*workerState)
+		if state.Drain || state.State == NovitaStatusRemoved {
+			return true, nil
+		}
 	}
 
 	if p.drainingStore == nil {

@@ -177,6 +177,10 @@ type DeployRequest struct {
 	EnablePtrace       bool                `json:"enablePtrace,omitempty"`  // Enable SYS_PTRACE capability for debugging (only for fixed resource pools)
 	ValidateImage      *bool               `json:"validateImage,omitempty"` // Whether to validate image before deployment (default: use config)
 	RegistryCredential *RegistryCredential `json:"registryCredential,omitempty"`
+
+	// min/max  other provider need
+	MinReplicas int `json:"minReplicas,omitempty"` // Minimum replica count (default 0)
+	MaxReplicas int `json:"maxReplicas,omitempty"` // Maximum replica count (default 10)
 }
 
 // RegistryCredential for private container registries
@@ -307,6 +311,7 @@ type PodInfo struct {
 	NodeName          string            `json:"nodeName,omitempty"`
 	CreatedAt         string            `json:"createdAt"`
 	StartedAt         string            `json:"startedAt,omitempty"`
+	ReadyAt           string            `json:"readyAt,omitempty"`           // Time when worker became ready (from provider API)
 	DeletionTimestamp string            `json:"deletionTimestamp,omitempty"` // Set when pod is terminating
 	Labels            map[string]string `json:"labels,omitempty"`
 	RestartCount      int32             `json:"restartCount"`

@@ -189,10 +189,21 @@ func (e *Executor) scaleDown(ctx context.Context, decision *ScaleDecision) error
 
 	// Step 2: Find idle workers
 	// Priority: select the worker with the longest idle time (earliest LastTaskTime)
+	// 🔥 CRITICAL: Only consider workers that are actually running (ONLINE/BUSY)
+	// Workers in OFFLINE/STARTING status with CurrentJobs=0 are NOT idle - they're still starting up!
 	var idleWorker *model.Worker
 	var oldestIdleTime time.Time
 
 	for _, w := range endpointWorkers {
+		// 🔥 FIX: Skip workers that are not yet running
+		// OFFLINE workers with no heartbeat are still in Pending/Starting phase
+		// Only ONLINE or BUSY workers can be considered for idle scale-down
+		if w.Status != model.WorkerStatusOnline && w.Status != model.WorkerStatusBusy {
+			logger.DebugCtx(ctx, "skipping worker %s for scale down: status=%s (not running yet)",
+				w.ID, w.Status)
+			continue
+		}
+
 		if w.CurrentJobs == 0 {
 			// If this is the first idle worker, or has been idle longer
 			if idleWorker == nil {

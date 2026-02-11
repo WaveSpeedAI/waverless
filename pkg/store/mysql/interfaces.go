@@ -64,7 +64,7 @@ type WorkerRepositoryInterface interface {
 	UpdateStatus(ctx context.Context, workerID string, status string) error
 	UpdateHeartbeat(ctx context.Context, workerID, endpoint string, jobsInProgress []string, jobsInProgressCount int, version string) error
 	UpdateLastTaskTime(ctx context.Context, workerID string) error
-	UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt *time.Time) error
+	UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt *time.Time) error
 
 	// Statistics updates
 	IncrementTaskStats(ctx context.Context, workerID string, completed bool, executionTimeMs int64) error
@@ -72,7 +72,7 @@ type WorkerRepositoryInterface interface {
 
 	// Offline marking
 	MarkOffline(ctx context.Context, heartbeatThreshold time.Duration) (int64, error)
-	MarkOfflineByPodName(ctx context.Context, podName string) error
+	MarkOfflineByPodName(ctx context.Context, podName string, terminatedAt ...time.Time) error
 
 	// Failure handling
 	UpdateWorkerFailure(ctx context.Context, podName, failureType, failureReason, failureDetails string, occurredAt time.Time) error

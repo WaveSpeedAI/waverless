@@ -103,6 +103,7 @@ const (
 	NovitaStatusCreating = "creating"
 	NovitaStatusUpdating = "updating"
 	NovitaStatusDeleting = "deleting"
+	NovitaStatusRemoved  = "removed" // Worker has been deleted, retained for 10 minutes
 
 	// Environment variable keys
 	EnvKeyNovitaProvider = "NOVITA_PROVIDER"
@@ -160,10 +161,10 @@ func mapDeployRequestToNovita(req *interfaces.DeployRequest, spec *interfaces.Sp
 	if err != nil {
 		return nil, err
 	}
-	gpuNum, err := strconv.ParseInt(spec.Resources.GPU, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse GPU number: %w", err)
-	}
+	// gpuNum, err := strconv.ParseInt(spec.Resources.GPU, 10, 64)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to parse GPU number: %w", err)
+	// }
 	rootfsSize, err := strconv.ParseInt(spec.Resources.EphemeralStorage, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse rootfs size from '%s': %w", spec.Resources.EphemeralStorage, err)
@@ -174,7 +175,7 @@ func mapDeployRequestToNovita(req *interfaces.DeployRequest, spec *interfaces.Sp
 		MaxNum:         req.Replicas, // Initially set to same as min
 		FreeTimeout:    DefaultFreeTimeout,
 		MaxConcurrent:  DefaultMaxConcurrent,
-		GPUNum:         int(gpuNum),
+		GPUNum:         req.GpuCount,
 		RequestTimeout: DefaultRequestTimeout,
 	}
 
@@ -275,10 +276,13 @@ func mapNovitaResponseToAppInfo(resp *GetEndpointResponse) *interfaces.AppInfo {
 	var replicas, readyReplicas, availableReplicas int32
 	replicas = int32(endpoint.WorkerConfig.MaxNum)
 
-	// Count running and healthy workers
+	// Count running and healthy workers (exclude removed workers)
 	runningWorkers := 0
 	healthyWorkers := 0
 	for _, worker := range endpoint.Workers {
+		if worker.State.State == NovitaStatusRemoved {
+			continue
+		}
 		if worker.State.State == NovitaStatusRunning {
 			runningWorkers++
 		}
@@ -355,6 +359,9 @@ func mapNovitaStatusToAppStatus(endpointName string, data *EndpointConfig) *inte
 	healthyWorkers := 0
 	pendingWorkers := 0
 	for _, worker := range data.Workers {
+		if worker.State.State == NovitaStatusRemoved {
+			continue // Skip removed workers
+		}
 		switch worker.State.State {
 		case NovitaStatusRunning:
 			runningWorkers++
@@ -395,6 +402,8 @@ func mapNovitaStatusToWaverless(state string) string {
 		return StatusUpdating
 	case NovitaStatusDeleting:
 		return StatusTerminating
+	case NovitaStatusRemoved:
+		return StatusStopped
 	default:
 		return StatusUnknown
 	}

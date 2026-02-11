@@ -3,6 +3,7 @@ package novita
 import (
 	"context"
 	"sync"
+	"time"
 
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
@@ -14,7 +15,7 @@ type NovitaLifecycleCallbacks struct {
 	// Worker status change callback
 	OnWorkerStatusChange func(workerID, endpoint string, podInfo *interfaces.PodInfo)
 	// Worker delete callback
-	OnWorkerDelete func(workerID, endpoint string)
+	OnWorkerDelete func(workerID, endpoint string, deletedAt *time.Time)
 	// Worker draining callback (triggered by scale down in Novita)
 	OnWorkerDraining func(workerID, endpoint, reason string)
 	// Worker failure callback
@@ -112,7 +113,15 @@ func (l *NovitaProviderLifecycle) registerWorkerStatusWatcher() error {
 		// 1. Trigger status change callback
 		l.callbacks.OnWorkerStatusChange(workerID, endpoint, info)
 
-		// 2. Detect failure and trigger failure callback
+		// 2. Detect draining state and trigger draining callback
+		// This ensures worker status is updated to DRAINING in database
+		if l.callbacks.OnWorkerDraining != nil && info != nil {
+			if info.Phase == "draining" || info.Reason == "Draining" {
+				l.callbacks.OnWorkerDraining(workerID, endpoint, info.Message)
+			}
+		}
+
+		// 3. Detect failure and trigger failure callback
 		if l.callbacks.OnWorkerFailure != nil {
 			if failureInfo := failureDetector.DetectFailure(info); failureInfo != nil {
 				l.callbacks.OnWorkerFailure(workerID, endpoint, failureInfo)
@@ -127,8 +136,8 @@ func (l *NovitaProviderLifecycle) registerWorkerDeleteWatcher() error {
 		return nil
 	}
 
-	return l.provider.WatchPodDelete(l.ctx, func(workerID, endpoint string) {
-		l.callbacks.OnWorkerDelete(workerID, endpoint)
+	return l.provider.WatchPodDelete(l.ctx, func(workerID, endpoint string, deletedAt *time.Time) {
+		l.callbacks.OnWorkerDelete(workerID, endpoint, deletedAt)
 
 		// Clear draining state in Redis
 		if err := l.provider.ClearDrainingWorker(l.ctx, workerID); err != nil {

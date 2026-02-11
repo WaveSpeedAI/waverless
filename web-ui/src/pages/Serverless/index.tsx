@@ -136,9 +136,9 @@ const ServerlessPage = () => {
 
       // Registry credential
       const regCred = allValues.registryCredential;
-      if (regCred?.registry && regCred?.username && regCred?.password) {
+      if (regCred?.username && regCred?.password) {
         data.registryCredential = {
-          registry: regCred.registry,
+          registry: regCred.registry || 'docker.io',
           username: regCred.username,
           password: regCred.password,
         };
@@ -285,7 +285,7 @@ const ServerlessPage = () => {
           </Row>
 
           <Collapse ghost items={[
-            { key: 'registry', label: <span><LockOutlined /> Registry Auth (Optional)</span>, children: (
+            { key: 'registry', forceRender: true, label: <span><LockOutlined /> Registry Auth (Optional)</span>, children: (
               <>
                 <Form.Item name={['registryCredential', 'registry']} label="Registry URL" tooltip="e.g., docker.io, ghcr.io, your-registry.com">
                   <Input placeholder="docker.io" />
@@ -296,7 +296,7 @@ const ServerlessPage = () => {
                 </Row>
               </>
             )},
-            { key: 'autoscaler', label: <span><SettingOutlined /> AutoScaler Config</span>, children: (
+            { key: 'autoscaler', forceRender: true, label: <span><SettingOutlined /> AutoScaler Config</span>, children: (
               <>
                 <Row gutter={16}>
                   <Col span={8}><Form.Item name={['autoscaler', 'minReplicas']} label="Min Replicas"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
@@ -318,7 +318,7 @@ const ServerlessPage = () => {
                 </Row>
               </>
             )},
-            { key: 'env', label: (
+            { key: 'env', forceRender: true, label: (
               <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
                 <span><SettingOutlined /> Environment Variables</span>
                 <Button type="link" size="small" onClick={(e) => {
@@ -361,7 +361,7 @@ const ServerlessPage = () => {
                 )}
               </Form.List>
             )},
-            { key: 'volumes', label: <span><DatabaseOutlined /> Volume Mounts</span>, children: (
+            { key: 'volumes', forceRender: true, label: <span><DatabaseOutlined /> Volume Mounts</span>, children: (
               <Form.List name="volumeMounts">
                 {(fields, { add, remove }) => (
                   <>

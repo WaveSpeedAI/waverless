@@ -1,94 +1,21 @@
 package novita
 
 import (
-	"context"
-	"sync"
 	"testing"
-	"time"
 
 	"waverless/pkg/interfaces"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// mockClientForStatusMonitor implements clientInterface for testing
-type mockClientForStatusMonitor struct {
-	endpoints *ListEndpointsResponse
-	err       error
-	callCount int
-	mu        sync.Mutex
-}
-
-func (m *mockClientForStatusMonitor) CreateEndpoint(ctx context.Context, req *CreateEndpointRequest) (*CreateEndpointResponse, error) {
-	return nil, nil
-}
-
-func (m *mockClientForStatusMonitor) GetEndpoint(ctx context.Context, endpointID string) (*GetEndpointResponse, error) {
-	return nil, nil
-}
-
-func (m *mockClientForStatusMonitor) ListEndpoints(ctx context.Context) (*ListEndpointsResponse, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.callCount++
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.endpoints, nil
-}
-
-func (m *mockClientForStatusMonitor) UpdateEndpoint(ctx context.Context, req *UpdateEndpointRequest) error {
-	return nil
-}
-
-func (m *mockClientForStatusMonitor) DeleteEndpoint(ctx context.Context, endpointID string) error {
-	return nil
-}
-
-func (m *mockClientForStatusMonitor) CreateRegistryAuth(ctx context.Context, req *CreateRegistryAuthRequest) (*CreateRegistryAuthResponse, error) {
-	return nil, nil
-}
-
-func (m *mockClientForStatusMonitor) ListRegistryAuths(ctx context.Context) (*ListRegistryAuthsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockClientForStatusMonitor) DeleteRegistryAuth(ctx context.Context, authID string) error {
-	return nil
-}
-
-func (m *mockClientForStatusMonitor) DrainWorker(ctx context.Context, req *DrainWorkerRequest) error {
-	return nil
-}
-
 func TestNewNovitaWorkerStatusMonitor(t *testing.T) {
-	client := &mockClientForStatusMonitor{}
-	monitor := NewNovitaWorkerStatusMonitor(client, nil)
-
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 	assert.NotNil(t, monitor)
-	assert.Equal(t, DefaultPollInterval, monitor.GetPollInterval())
-	assert.NotNil(t, monitor.GetSanitizer())
-}
-
-func TestNewNovitaWorkerStatusMonitorWithInterval(t *testing.T) {
-	client := &mockClientForStatusMonitor{}
-
-	// Test with valid interval
-	monitor := NewNovitaWorkerStatusMonitorWithInterval(client, nil, 10*time.Second)
-	assert.Equal(t, 10*time.Second, monitor.GetPollInterval())
-
-	// Test with zero interval (should use default)
-	monitor = NewNovitaWorkerStatusMonitorWithInterval(client, nil, 0)
-	assert.Equal(t, DefaultPollInterval, monitor.GetPollInterval())
-
-	// Test with negative interval (should use default)
-	monitor = NewNovitaWorkerStatusMonitorWithInterval(client, nil, -5*time.Second)
-	assert.Equal(t, DefaultPollInterval, monitor.GetPollInterval())
+	assert.NotNil(t, monitor.sanitizer)
 }
 
 func TestClassifyNovitaFailure_ImagePull(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 
 	testCases := []struct {
 		name     string
@@ -143,7 +70,7 @@ func TestClassifyNovitaFailure_ImagePull(t *testing.T) {
 }
 
 func TestClassifyNovitaFailure_ContainerCrash(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 
 	testCases := []struct {
 		name     string
@@ -191,7 +118,7 @@ func TestClassifyNovitaFailure_ContainerCrash(t *testing.T) {
 }
 
 func TestClassifyNovitaFailure_ResourceLimit(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 
 	testCases := []struct {
 		name     string
@@ -239,7 +166,7 @@ func TestClassifyNovitaFailure_ResourceLimit(t *testing.T) {
 }
 
 func TestClassifyNovitaFailure_Timeout(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 
 	testCases := []struct {
 		name     string
@@ -280,7 +207,7 @@ func TestClassifyNovitaFailure_Timeout(t *testing.T) {
 }
 
 func TestClassifyNovitaFailure_Unknown(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
 
 	testCases := []struct {
 		name     string
@@ -313,333 +240,57 @@ func TestClassifyNovitaFailure_Unknown(t *testing.T) {
 	}
 }
 
-func TestWatchWorkerStatus_NilCallback(t *testing.T) {
-	client := &mockClientForStatusMonitor{}
-	monitor := NewNovitaWorkerStatusMonitor(client, nil)
-
-	err := monitor.WatchWorkerStatus(context.Background(), nil)
-	assert.NoError(t, err)
+func TestDetectFailure_NilInput(t *testing.T) {
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
+	result := monitor.DetectFailure(nil)
+	assert.Nil(t, result)
 }
 
-func TestWatchWorkerStatus_DetectsFailure(t *testing.T) {
-	client := &mockClientForStatusMonitor{
-		endpoints: &ListEndpointsResponse{
-			Endpoints: []EndpointListItem{
-				{
-					ID:      "ep-1",
-					Name:    "test-endpoint",
-					AppName: "test-app",
-					State: StateInfo{
-						State: "serving",
-					},
-					Workers: []WorkerInfo{
-						{
-							ID: "worker-1",
-							State: StateInfo{
-								State:   "failed",
-								Error:   "image_pull_failed",
-								Message: "failed to pull image: not found",
-							},
-							Healthy: false,
-						},
-					},
-				},
-			},
-		},
+func TestDetectFailure_HealthyWorker(t *testing.T) {
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
+
+	info := &interfaces.PodInfo{
+		Name:   "worker-1",
+		Phase:  "running",
+		Status: "Running",
+		Reason: "Ready",
 	}
 
-	monitor := NewNovitaWorkerStatusMonitorWithInterval(client, nil, 50*time.Millisecond)
-
-	var receivedFailures []*interfaces.WorkerFailureInfo
-	var receivedWorkerIDs []string
-	var receivedEndpoints []string
-	var mu sync.Mutex
-
-	callback := func(workerID, endpoint string, info *interfaces.WorkerFailureInfo) {
-		mu.Lock()
-		defer mu.Unlock()
-		receivedWorkerIDs = append(receivedWorkerIDs, workerID)
-		receivedEndpoints = append(receivedEndpoints, endpoint)
-		receivedFailures = append(receivedFailures, info)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	go func() {
-		_ = monitor.WatchWorkerStatus(ctx, callback)
-	}()
-
-	// Wait for at least one poll cycle
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	require.GreaterOrEqual(t, len(receivedFailures), 1, "Should have received at least one failure")
-	assert.Equal(t, "worker-1", receivedWorkerIDs[0])
-	assert.Equal(t, "test-endpoint", receivedEndpoints[0])
-	assert.Equal(t, interfaces.FailureTypeImagePull, receivedFailures[0].Type)
+	result := monitor.DetectFailure(info)
+	assert.Nil(t, result)
 }
 
-func TestWatchWorkerStatus_NoCallbackForHealthyWorkers(t *testing.T) {
-	client := &mockClientForStatusMonitor{
-		endpoints: &ListEndpointsResponse{
-			Endpoints: []EndpointListItem{
-				{
-					ID:      "ep-1",
-					Name:    "test-endpoint",
-					AppName: "test-app",
-					State: StateInfo{
-						State: "serving",
-					},
-					Workers: []WorkerInfo{
-						{
-							ID: "worker-1",
-							State: StateInfo{
-								State: "running",
-							},
-							Healthy: true,
-						},
-					},
-				},
-			},
-		},
+func TestDetectFailure_FailedWorker(t *testing.T) {
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
+
+	info := &interfaces.PodInfo{
+		Name:    "worker-1",
+		Phase:   "failed",
+		Status:  "Failed",
+		Reason:  "image_pull_failed",
+		Message: "failed to pull image: not found",
 	}
 
-	monitor := NewNovitaWorkerStatusMonitorWithInterval(client, nil, 50*time.Millisecond)
-
-	callbackCalled := false
-	callback := func(workerID, endpoint string, info *interfaces.WorkerFailureInfo) {
-		callbackCalled = true
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-
-	go func() {
-		_ = monitor.WatchWorkerStatus(ctx, callback)
-	}()
-
-	// Wait for poll cycles
-	time.Sleep(100 * time.Millisecond)
-
-	assert.False(t, callbackCalled, "Callback should not be called for healthy workers")
+	result := monitor.DetectFailure(info)
+	assert.NotNil(t, result)
+	assert.Equal(t, interfaces.FailureTypeImagePull, result.Type)
+	assert.Equal(t, "image_pull_failed", result.Reason)
 }
 
-func TestWatchWorkerStatus_DetectsEndpointFailure(t *testing.T) {
-	client := &mockClientForStatusMonitor{
-		endpoints: &ListEndpointsResponse{
-			Endpoints: []EndpointListItem{
-				{
-					ID:      "ep-1",
-					Name:    "test-endpoint",
-					AppName: "test-app",
-					State: StateInfo{
-						State:   "failed",
-						Error:   "image_not_found",
-						Message: "image does not exist",
-					},
-					Workers: []WorkerInfo{},
-				},
-			},
-		},
+func TestDetectFailure_ErrorInMessage(t *testing.T) {
+	monitor := NewNovitaWorkerStatusMonitor(nil, nil)
+
+	info := &interfaces.PodInfo{
+		Name:    "worker-1",
+		Phase:   "running",
+		Status:  "Running",
+		Reason:  "",
+		Message: "error: container crashed",
 	}
 
-	monitor := NewNovitaWorkerStatusMonitorWithInterval(client, nil, 50*time.Millisecond)
-
-	var receivedWorkerID string
-	var receivedEndpoint string
-	var receivedFailure *interfaces.WorkerFailureInfo
-	var mu sync.Mutex
-
-	callback := func(workerID, endpoint string, info *interfaces.WorkerFailureInfo) {
-		mu.Lock()
-		defer mu.Unlock()
-		receivedWorkerID = workerID
-		receivedEndpoint = endpoint
-		receivedFailure = info
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	go func() {
-		_ = monitor.WatchWorkerStatus(ctx, callback)
-	}()
-
-	// Wait for poll cycle
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	require.NotNil(t, receivedFailure, "Should have received a failure")
-	assert.Equal(t, "endpoint-test-endpoint", receivedWorkerID)
-	assert.Equal(t, "test-endpoint", receivedEndpoint)
-	assert.Equal(t, interfaces.FailureTypeImagePull, receivedFailure.Type)
-}
-
-func TestWatchWorkerStatus_NoDuplicateCallbacks(t *testing.T) {
-	client := &mockClientForStatusMonitor{
-		endpoints: &ListEndpointsResponse{
-			Endpoints: []EndpointListItem{
-				{
-					ID:      "ep-1",
-					Name:    "test-endpoint",
-					AppName: "test-app",
-					State: StateInfo{
-						State: "serving",
-					},
-					Workers: []WorkerInfo{
-						{
-							ID: "worker-1",
-							State: StateInfo{
-								State:   "failed",
-								Error:   "crash",
-								Message: "container crashed",
-							},
-							Healthy: false,
-						},
-					},
-				},
-			},
-		},
-	}
-
-	monitor := NewNovitaWorkerStatusMonitorWithInterval(client, nil, 30*time.Millisecond)
-
-	callbackCount := 0
-	var mu sync.Mutex
-
-	callback := func(workerID, endpoint string, info *interfaces.WorkerFailureInfo) {
-		mu.Lock()
-		defer mu.Unlock()
-		callbackCount++
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	go func() {
-		_ = monitor.WatchWorkerStatus(ctx, callback)
-	}()
-
-	// Wait for multiple poll cycles
-	time.Sleep(150 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Should only be called once since state doesn't change
-	assert.Equal(t, 1, callbackCount, "Callback should only be called once for the same failure state")
-}
-
-func TestIsWorkerFailed(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
-
-	testCases := []struct {
-		name     string
-		worker   *WorkerInfo
-		expected bool
-	}{
-		{
-			name:     "nil worker",
-			worker:   nil,
-			expected: false,
-		},
-		{
-			name: "healthy running worker",
-			worker: &WorkerInfo{
-				ID:      "w1",
-				State:   StateInfo{State: "running"},
-				Healthy: true,
-			},
-			expected: false,
-		},
-		{
-			name: "failed state",
-			worker: &WorkerInfo{
-				ID:      "w1",
-				State:   StateInfo{State: "failed"},
-				Healthy: false,
-			},
-			expected: true,
-		},
-		{
-			name: "error state",
-			worker: &WorkerInfo{
-				ID:      "w1",
-				State:   StateInfo{State: "error"},
-				Healthy: false,
-			},
-			expected: true,
-		},
-		{
-			name: "has error code",
-			worker: &WorkerInfo{
-				ID:      "w1",
-				State:   StateInfo{State: "running", Error: "some_error"},
-				Healthy: true,
-			},
-			expected: true,
-		},
-		{
-			name: "unhealthy with error message",
-			worker: &WorkerInfo{
-				ID:      "w1",
-				State:   StateInfo{State: "running", Message: "error occurred"},
-				Healthy: false,
-			},
-			expected: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := monitor.isWorkerFailed(tc.worker)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestClearWorkerStates(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
-
-	// Add some states
-	monitor.workerStates.Store("worker-1", &workerState{State: "failed"})
-	monitor.workerStates.Store("worker-2", &workerState{State: "running"})
-
-	// Verify states exist
-	_, ok1 := monitor.workerStates.Load("worker-1")
-	_, ok2 := monitor.workerStates.Load("worker-2")
-	assert.True(t, ok1)
-	assert.True(t, ok2)
-
-	// Clear states
-	monitor.ClearWorkerStates()
-
-	// Verify states are cleared
-	_, ok1 = monitor.workerStates.Load("worker-1")
-	_, ok2 = monitor.workerStates.Load("worker-2")
-	assert.False(t, ok1)
-	assert.False(t, ok2)
-}
-
-func TestSetPollInterval(t *testing.T) {
-	monitor := NewNovitaWorkerStatusMonitor(&mockClientForStatusMonitor{}, nil)
-
-	// Test setting valid interval
-	monitor.SetPollInterval(10 * time.Second)
-	assert.Equal(t, 10*time.Second, monitor.GetPollInterval())
-
-	// Test setting zero interval (should not change)
-	monitor.SetPollInterval(0)
-	assert.Equal(t, 10*time.Second, monitor.GetPollInterval())
-
-	// Test setting negative interval (should not change)
-	monitor.SetPollInterval(-5 * time.Second)
-	assert.Equal(t, 10*time.Second, monitor.GetPollInterval())
+	result := monitor.DetectFailure(info)
+	assert.NotNil(t, result)
+	assert.Equal(t, interfaces.FailureTypeContainerCrash, result.Type)
 }
 
 func TestContainsAny(t *testing.T) {

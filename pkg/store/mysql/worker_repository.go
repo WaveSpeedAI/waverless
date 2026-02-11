@@ -83,7 +83,8 @@ func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoi
 }
 
 // UpsertFromPod creates or updates worker from pod watch events (status STARTING until heartbeat)
-func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt *time.Time) error {
+// readyAt is optional - if provided (e.g. from Novita API), it will be used instead of time.Now()
+func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt *time.Time) error {
 	now := time.Now()
 
 	logger.InfoCtx(ctx, "UpsertFromPod: pod_name=%s, endpoint=%s, phase=%s, status=%s, reason=%s", podName, endpoint, phase, status, reason)
@@ -102,6 +103,9 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 	if startedAt != nil {
 		runtimeState["startedAt"] = startedAt.Format(time.RFC3339)
 	}
+	if readyAt != nil {
+		runtimeState["readyAt"] = readyAt.Format(time.RFC3339)
+	}
 
 	updates := map[string]interface{}{
 		"runtime_state": JSONMap(runtimeState),
@@ -116,16 +120,22 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 		updates["pod_started_at"] = startedAt
 	}
 
-	// Calculate cold start duration
-	if createdAt != nil && startedAt != nil {
-		coldStartMs := startedAt.Sub(*createdAt).Milliseconds()
+	// Calculate cold start duration using readyAt if available, otherwise startedAt
+	coldStartEnd := startedAt
+	if readyAt != nil {
+		coldStartEnd = readyAt
+	}
+	if createdAt != nil && coldStartEnd != nil {
+		coldStartMs := coldStartEnd.Sub(*createdAt).Milliseconds()
 		if coldStartMs > 0 {
 			updates["cold_start_duration_ms"] = coldStartMs
 		}
 	}
 
-	// Update pod_ready_at when Ready
-	if reason == "Ready" && status == "Running" {
+	// Update pod_ready_at: use API-provided readyAt if available, otherwise use now when Ready
+	if readyAt != nil {
+		updates["pod_ready_at"] = readyAt
+	} else if reason == "Ready" && status == "Running" {
 		updates["pod_ready_at"] = now
 	}
 
@@ -151,13 +161,18 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 			RuntimeState:        runtimeState,
 			PodCreatedAt:        createdAt,
 			PodStartedAt:        startedAt,
+			PodReadyAt:          readyAt,
 			ColdStartDurationMs: nil,
 			LastHeartbeat:       now,
 			CreatedAt:           now,
 			UpdatedAt:           now,
 		}
-		if createdAt != nil && startedAt != nil {
-			coldStartMs := startedAt.Sub(*createdAt).Milliseconds()
+		coldStartEnd := startedAt
+		if readyAt != nil {
+			coldStartEnd = readyAt
+		}
+		if createdAt != nil && coldStartEnd != nil {
+			coldStartMs := coldStartEnd.Sub(*createdAt).Milliseconds()
 			if coldStartMs > 0 {
 				worker.ColdStartDurationMs = &coldStartMs
 			}
@@ -299,14 +314,19 @@ func (r *WorkerRepository) GetStaleWorkers(ctx context.Context, threshold time.T
 }
 
 // MarkOfflineByPodName marks a specific worker as offline by pod name
-func (r *WorkerRepository) MarkOfflineByPodName(ctx context.Context, podName string) error {
+// If terminatedAt is provided, it will be used instead of time.Now()
+func (r *WorkerRepository) MarkOfflineByPodName(ctx context.Context, podName string, terminatedAt ...time.Time) error {
 	now := time.Now()
+	termTime := now
+	if len(terminatedAt) > 0 && !terminatedAt[0].IsZero() {
+		termTime = terminatedAt[0]
+	}
 	return r.ds.DB(ctx).Model(&model.Worker{}).
 		Where("pod_name = ?", podName).
 		Updates(map[string]interface{}{
 			"status":        constants.WorkerStatusOffline,
 			"current_jobs":  0,
-			"terminated_at": now,
+			"terminated_at": termTime,
 			"updated_at":    now,
 		}).Error
 }
@@ -333,7 +353,6 @@ func (r *WorkerRepository) Delete(ctx context.Context, workerID string) error {
 //
 // Returns:
 //   - error if the database update fails
-//
 func (r *WorkerRepository) UpdateWorkerFailure(ctx context.Context, podName, failureType, failureReason, failureDetails string, occurredAt time.Time) error {
 	logger.InfoCtx(ctx, "UpdateWorkerFailure: attempting to update pod_name=%s, type=%s, reason=%s", podName, failureType, failureReason)
 

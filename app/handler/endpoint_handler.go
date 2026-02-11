@@ -88,6 +88,8 @@ func (h *EndpointHandler) CreateEndpoint(c *gin.Context) {
 		ShmSize:       req.ShmSize,
 		EnablePtrace:  req.EnablePtrace,
 		ValidateImage: req.ValidateImage,
+		MinReplicas:   req.MinReplicas,
+		MaxReplicas:   req.MaxReplicas,
 	}
 	if req.RegistryCredential != nil {
 		providerReq.RegistryCredential = &interfaces.RegistryCredential{
