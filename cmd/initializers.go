@@ -16,6 +16,7 @@ import (
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
+	"waverless/pkg/provider/gmi"
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
 	"waverless/pkg/resource"
@@ -204,9 +205,17 @@ func (app *Application) initServices() error {
 		}
 	}
 
+	// Get GMI deployment provider for status sync
+	var gmiDeployProvider *gmi.GMIDeploymentProvider
+	if app.config.GMI.Enabled {
+		if gmiProv, ok := app.deploymentProvider.(*gmi.GMIDeploymentProvider); ok {
+			gmiDeployProvider = gmiProv
+		}
+	}
+
 	// Setup Lifecycle Manager for unified watcher management
 	// This replaces all the individual setup*Watcher methods
-	if err := app.setupLifecycleManager(k8sDeployProvider, novitaDeployProvider); err != nil {
+	if err := app.setupLifecycleManager(k8sDeployProvider, novitaDeployProvider, gmiDeployProvider); err != nil {
 		logger.WarnCtx(app.ctx, "Failed to setup lifecycle manager: %v (non-critical, continuing)", err)
 	}
 
@@ -237,7 +246,7 @@ func (app *Application) initServices() error {
 
 // setupLifecycleManager sets up the unified lifecycle manager for all providers
 // This replaces the individual setup*Watcher methods with a centralized approach
-func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProvider, novitaProvider *novita.NovitaDeploymentProvider) error {
+func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProvider, novitaProvider *novita.NovitaDeploymentProvider, gmiProvider *gmi.GMIDeploymentProvider) error {
 	// Create lifecycle manager
 	app.lifecycleManager = lifecycle.NewManager(
 		app.ctx,
@@ -276,6 +285,14 @@ func (app *Application) setupLifecycleManager(k8sProvider *k8s.K8sDeploymentProv
 		}
 	}
 
+	// Register GMI provider if enabled
+	if gmiProvider != nil {
+		logger.InfoCtx(app.ctx, "Registering GMI provider with lifecycle manager...")
+		if err := app.lifecycleManager.RegisterGMIProvider(gmiProvider); err != nil {
+			logger.WarnCtx(app.ctx, "Failed to register GMI provider: %v", err)
+		}
+	}
+
 	logger.InfoCtx(app.ctx, "Lifecycle manager setup completed with providers: %v", app.lifecycleManager.GetRegisteredProviders())
 	return nil
 }
@@ -288,8 +305,8 @@ func (app *Application) initHandlers() error {
 	app.statisticsHandler = handler.NewStatisticsHandler(app.statisticsService, app.workerService)
 	app.monitoringHandler = handler.NewMonitoringHandler(app.monitoringService)
 
-	// Initialize Endpoint Handler (for K8s or Novita)
-	if app.config.K8s.Enabled || app.config.Novita.Enabled {
+	// Initialize Endpoint Handler (for K8s, Novita or GMI)
+	if app.config.K8s.Enabled || app.config.Novita.Enabled || app.config.GMI.Enabled {
 		if app.deploymentProvider == nil {
 			logger.ErrorCtx(app.ctx, "Deployment provider is enabled but provider is nil")
 		} else {
@@ -299,6 +316,9 @@ func (app *Application) initHandlers() error {
 			}
 			if app.config.Novita.Enabled {
 				logger.InfoCtx(app.ctx, "Endpoint handler initialized for Novita")
+			}
+			if app.config.GMI.Enabled {
+				logger.InfoCtx(app.ctx, "Endpoint handler initialized for GMI")
 			}
 		}
 	}
@@ -347,8 +367,7 @@ func (app *Application) initAutoScaler() error {
 			logger.InfoCtx(app.ctx, "Spec service injected into SpecManager - specs will be read from database first")
 		}
 	} else {
-		logger.WarnCtx(app.ctx, "AutoScaler requires K8s deployment provider, skipping initialization")
-		return nil
+		logger.WarnCtx(app.ctx, "K8s deployment provider not available, autoscaler will run without resource limits")
 	}
 
 	autoscalerConfig := &autoscaler.Config{
