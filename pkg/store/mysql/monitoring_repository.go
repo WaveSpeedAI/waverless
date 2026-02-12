@@ -338,7 +338,7 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 		Terminated int `gorm:"column:term_count"`
 	}
 	r.ds.DB(ctx).Raw(`
-		SELECT 
+		SELECT
 			COUNT(CASE WHEN event_type = 'WORKER_REGISTERED' THEN 1 END) as created,
 			COUNT(CASE WHEN event_type = 'WORKER_OFFLINE' THEN 1 END) as term_count
 		FROM worker_events 

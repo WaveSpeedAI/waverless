@@ -25,6 +25,7 @@ type Config struct {
 	Notification     NotificationConfig     `yaml:"notification"`        // Notification configuration
 	Providers        *ProvidersConfig       `yaml:"providers,omitempty"` // Providers configuration (optional)
 	Novita           NovitaConfig           `yaml:"novita"`              // Novita serverless configuration
+	GMI              GMIConfig              `yaml:"gmi"`                 // GMI serverless configuration
 	ImageValidation  ImageValidationConfig  `yaml:"imageValidation"`     // Image validation configuration
 	ResourceReleaser ResourceReleaserConfig `yaml:"resourceReleaser"`    // Resource releaser configuration
 }
@@ -224,6 +225,16 @@ type NovitaConfig struct {
 	Enabled      bool   `yaml:"enabled"`       // Whether to enable Novita provider
 	APIKey       string `yaml:"api_key"`       // Novita API key (Bearer token)
 	BaseURL      string `yaml:"base_url"`      // API base URL, default: https://api.novita.ai
+	ConfigDir    string `yaml:"config_dir"`    // Configuration directory (specs.yaml and templates)
+	PollInterval int    `yaml:"poll_interval"` // Poll interval for status updates (seconds, default: 10)
+}
+
+// GMIConfig GMI (Generic Model Interface) serverless configuration
+type GMIConfig struct {
+	Enabled      bool   `yaml:"enabled"`       // Whether to enable GMI provider
+	APIKey       string `yaml:"api_key"`       // GMI API key (Bearer token)
+	BaseURL      string `yaml:"base_url"`      // API base URL
+	CallbackURL  string `yaml:"callback_url"`  // External URL of waverless server for worker callbacks (e.g., http://35.189.190.93:8087)
 	ConfigDir    string `yaml:"config_dir"`    // Configuration directory (specs.yaml and templates)
 	PollInterval int    `yaml:"poll_interval"` // Poll interval for status updates (seconds, default: 10)
 }
