@@ -127,6 +127,7 @@ func NewNovitaDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvi
 		"RUNPOD_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$RUNPOD_POD_ID",
 		"RUNPOD_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$RUNPOD_POD_ID/$ID?",
 		"RUNPOD_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$RUNPOD_POD_ID/$ID?",
+		"RUNPOD_AI_API_KEY":          cfg.Server.APIKey,
 
 		// Waverless native environment variables (for wavespeed-python SDK)
 		"WAVERLESS_ENDPOINT_ID":         "{{.Endpoint}}",
