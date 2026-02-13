@@ -121,6 +121,13 @@ func NewNovitaDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvi
 
 	// Build globalEnv with defaults
 	globalEnv := map[string]string{
+		"RUNPOD_ENDPOINT_ID":         "{{.Endpoint}}",
+		"RUNPOD_PING_INTERVAL":       "10000",
+		"RUNPOD_WEBHOOK_GET_JOB":     cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-take/$ID?",
+		"RUNPOD_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$RUNPOD_POD_ID",
+		"RUNPOD_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$RUNPOD_POD_ID/$ID?",
+		"RUNPOD_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$RUNPOD_POD_ID/$ID?",
+
 		// Waverless native environment variables (for wavespeed-python SDK)
 		"WAVERLESS_ENDPOINT_ID":         "{{.Endpoint}}",
 		"WAVERLESS_PING_INTERVAL":       "10000",
@@ -486,6 +493,19 @@ func (p *NovitaDeploymentProvider) UpdateDeployment(ctx context.Context, req *in
 	}
 
 	// Map update request
+	// Merge globalEnv with request env if env is being updated (same as Deploy)
+	if req.Env != nil {
+		mergedEnv := make(map[string]string)
+		for k, v := range p.globalEnv {
+			v = strings.ReplaceAll(v, "{{.Endpoint}}", req.Endpoint)
+			mergedEnv[k] = v
+		}
+		for k, v := range *req.Env {
+			mergedEnv[k] = v
+		}
+		req.Env = &mergedEnv
+	}
+
 	updateReq := mapUpdateRequestToNovita(endpointID, req, currentConfig)
 	if updateReq == nil {
 		return nil, fmt.Errorf("failed to map update request")
