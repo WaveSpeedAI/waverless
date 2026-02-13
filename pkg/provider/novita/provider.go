@@ -121,21 +121,19 @@ func NewNovitaDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvi
 
 	// Build globalEnv with defaults
 	globalEnv := map[string]string{
-		"RUNPOD_ENDPOINT_ID":         "{{.Endpoint}}",
 		"RUNPOD_PING_INTERVAL":       "10000",
 		"RUNPOD_WEBHOOK_GET_JOB":     cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-take/$ID?",
-		"RUNPOD_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$RUNPOD_POD_ID",
-		"RUNPOD_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$RUNPOD_POD_ID/$ID?",
-		"RUNPOD_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$RUNPOD_POD_ID/$ID?",
+		"RUNPOD_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$DEVICE_ID",
+		"RUNPOD_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$DEVICE_ID/$ID?",
+		"RUNPOD_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$DEVICE_ID/$ID?",
 		"RUNPOD_AI_API_KEY":          cfg.Server.APIKey,
 
 		// Waverless native environment variables (for wavespeed-python SDK)
-		"WAVERLESS_ENDPOINT_ID":         "{{.Endpoint}}",
 		"WAVERLESS_PING_INTERVAL":       "10000",
 		"WAVERLESS_WEBHOOK_GET_JOB":     cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-take/$ID?",
-		"WAVERLESS_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$WAVERLESS_POD_ID",
-		"WAVERLESS_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$WAVERLESS_POD_ID/$ID?",
-		"WAVERLESS_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$WAVERLESS_POD_ID/$ID?",
+		"WAVERLESS_WEBHOOK_PING":        cfg.Server.BaseURL + "/v2/{{.Endpoint}}/ping/$DEVICE_ID",
+		"WAVERLESS_WEBHOOK_POST_OUTPUT": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-done/$DEVICE_ID/$ID?",
+		"WAVERLESS_WEBHOOK_POST_STREAM": cfg.Server.BaseURL + "/v2/{{.Endpoint}}/job-stream/$DEVICE_ID/$ID?",
 		"WAVERLESS_API_KEY":             cfg.Server.APIKey,
 		EnvKeyNovitaProvider:            EnvValueTrue,
 		EnvKeyProviderType:              EnvValueNovita,
