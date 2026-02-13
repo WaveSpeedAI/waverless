@@ -114,7 +114,6 @@ func NewResourceReleaser(
 //
 // Parameters:
 //   - ctx: Context for cancellation
-//
 func (r *ResourceReleaser) Start(ctx context.Context) {
 	r.mu.Lock()
 	if r.running {
@@ -162,7 +161,6 @@ func (r *ResourceReleaser) Start(ctx context.Context) {
 //
 // Parameters:
 //   - ctx: Context for database and provider operations
-//
 func (r *ResourceReleaser) CheckAndRelease(ctx context.Context) {
 	// Step 1: Get all workers with IMAGE_PULL_FAILED or CONTAINER_CRASH status
 	imagePullWorkers, err := r.workerRepo.GetWorkersByFailureType(ctx, string(interfaces.FailureTypeImagePull))
@@ -487,7 +485,6 @@ func (r *ResourceReleaser) checkWaitingNodeWorkers(ctx context.Context, affected
 //
 // Returns:
 //   - error if the database operations fail
-//
 func (r *ResourceReleaser) UpdateEndpointHealthStatus(ctx context.Context, endpoint string) error {
 	// Get all active workers for this endpoint (excludes OFFLINE)
 	workers, err := r.workerRepo.GetByEndpoint(ctx, endpoint)
@@ -516,6 +513,19 @@ func (r *ResourceReleaser) UpdateEndpointHealthStatus(ctx context.Context, endpo
 	var healthMessage string
 
 	if totalWorkers == 0 {
+		// No active workers - check if endpoint was previously UNHEALTHY
+		// When all failed workers become OFFLINE, totalWorkers=0 but the endpoint
+		// is still broken (scaled to 0 due to failures). We should preserve UNHEALTHY
+		// status so the user can see the failure reason on the UI.
+		currentEp, epErr := r.endpointRepo.Get(ctx, endpoint)
+		if epErr == nil && currentEp != nil && currentEp.HealthStatus == string(model.HealthStatusUnhealthy) {
+			// Endpoint was UNHEALTHY and now has 0 active workers (all terminated)
+			// Keep UNHEALTHY status - user needs to fix the issue and redeploy
+			logger.Info("Endpoint has no active workers but was UNHEALTHY, preserving status",
+				zap.String("endpoint", endpoint),
+			)
+			return nil // Don't overwrite - keep existing UNHEALTHY status and message
+		}
 		healthStatus = model.HealthStatusHealthy
 		healthMessage = ""
 	} else if failedWorkers == 0 {
