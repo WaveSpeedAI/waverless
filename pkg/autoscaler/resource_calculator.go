@@ -42,7 +42,12 @@ func (c *ResourceCalculator) CalculateEndpointResource(ctx context.Context, endp
 		specName = meta.SpecName
 	}
 
-	// Get spec
+	// Get spec - if specManager is nil (e.g., GMI/Novita provider), skip resource calculation
+	if c.specManager == nil {
+		logger.DebugCtx(ctx, "specManager is nil, skipping resource calculation for endpoint %s (non-K8s provider)", endpoint.Name)
+		return &Resources{}, nil
+	}
+
 	spec, err := c.specManager.GetSpec(specName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get spec %s: %w", specName, err)
