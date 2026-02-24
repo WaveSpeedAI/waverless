@@ -248,13 +248,13 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 	var eventIdleStats struct {
 		SumIdleMs float64 `gorm:"column:sum_idle_ms"`
 		MaxIdleMs float64 `gorm:"column:max_idle_ms"`
-		Count     int     `gorm:"column:count"`
+		Count     int     `gorm:"column:cnt"`
 	}
 	r.ds.DB(ctx).Raw(`
 		SELECT 
-			COALESCE(SUM(LEAST(idle_duration_ms, TIMESTAMPDIFF(MICROSECOND, ?, event_time) / 1000)), 0) as sum_idle_ms,
-			COALESCE(MAX(LEAST(idle_duration_ms, TIMESTAMPDIFF(MICROSECOND, ?, event_time) / 1000)), 0) as max_idle_ms,
-			COUNT(*) as count
+			COALESCE(SUM(CAST(LEAST(idle_duration_ms, TIMESTAMPDIFF(MICROSECOND, ?, event_time) / 1000) AS DECIMAL(20,4))), 0) as sum_idle_ms,
+			COALESCE(MAX(CAST(LEAST(idle_duration_ms, TIMESTAMPDIFF(MICROSECOND, ?, event_time) / 1000) AS DECIMAL(20,4))), 0) as max_idle_ms,
+			COUNT(*) as cnt
 		FROM worker_events 
 		WHERE endpoint = ? AND event_time >= ? AND event_time < ? 
 		AND event_type = 'WORKER_TASK_PULLED' AND idle_duration_ms IS NOT NULL
@@ -335,12 +335,12 @@ func (r *MonitoringRepository) AggregateMinuteStats(ctx context.Context, endpoin
 	// 6. Worker lifecycle from worker_events
 	var lifecycleStats struct {
 		Created    int `gorm:"column:created"`
-		Terminated int `gorm:"column:terminated"`
+		Terminated int `gorm:"column:term_count"`
 	}
 	r.ds.DB(ctx).Raw(`
 		SELECT 
 			COUNT(CASE WHEN event_type = 'WORKER_REGISTERED' THEN 1 END) as created,
-			COUNT(CASE WHEN event_type = 'WORKER_OFFLINE' THEN 1 END) as `+"`terminated`"+`
+			COUNT(CASE WHEN event_type = 'WORKER_OFFLINE' THEN 1 END) as term_count
 		FROM worker_events 
 		WHERE endpoint = ? AND event_time >= ? AND event_time < ?
 	`, endpoint, from, to).Scan(&lifecycleStats)

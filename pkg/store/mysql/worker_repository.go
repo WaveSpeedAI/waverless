@@ -24,6 +24,7 @@ func NewWorkerRepository(ds *Datastore) *WorkerRepository {
 }
 
 // UpdateHeartbeat updates worker heartbeat, status and jobs (sets status to ONLINE/BUSY)
+// Uses ON DUPLICATE KEY UPDATE to avoid race conditions in concurrent heartbeat scenarios
 func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoint string, jobsInProgress []string, jobsInProgressCount int, version string) error {
 	now := time.Now()
 	currentJobs := len(jobsInProgress)
@@ -38,48 +39,31 @@ func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoi
 
 	jobsJSON, _ := json.Marshal(jobsInProgress)
 
-	updates := map[string]interface{}{
-		"endpoint":         endpoint,
-		"status":           gorm.Expr("CASE WHEN status = ? THEN status ELSE ? END", constants.WorkerStatusDraining, status),
-		"current_jobs":     currentJobs,
-		"jobs_in_progress": string(jobsJSON),
-		"last_heartbeat":   now,
-		"updated_at":       now,
-	}
-	// Only update version if provided (don't overwrite with empty)
-	if version != "" {
-		updates["version"] = version
+	// Build version clause for SQL
+	versionValue := version
+	if version == "" {
+		versionValue = "" // Will use COALESCE to keep existing value
 	}
 
-	// Update existing worker (preserve DRAINING status)
-	result := r.ds.DB(ctx).Model(&model.Worker{}).
-		Where("worker_id = ?", workerID).
-		Updates(updates)
+	// Use raw SQL with ON DUPLICATE KEY UPDATE to handle race conditions
+	// This is atomic and avoids the UPDATE-then-INSERT race condition
+	sql := `
+		INSERT INTO workers (worker_id, endpoint, pod_name, status, concurrency, current_jobs, jobs_in_progress, version, last_heartbeat, last_task_time, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			endpoint = VALUES(endpoint),
+			status = CASE WHEN status = ? THEN status ELSE VALUES(status) END,
+			current_jobs = VALUES(current_jobs),
+			jobs_in_progress = VALUES(jobs_in_progress),
+			version = CASE WHEN VALUES(version) = '' THEN version ELSE VALUES(version) END,
+			last_heartbeat = VALUES(last_heartbeat),
+			updated_at = VALUES(updated_at)
+	`
 
-	if result.Error != nil {
-		return result.Error
-	}
-
-	// If worker doesn't exist, create it
-	if result.RowsAffected == 0 {
-		worker := &model.Worker{
-			WorkerID:       workerID,
-			Endpoint:       endpoint,
-			PodName:        workerID,
-			Status:         status.String(),
-			Concurrency:    1,
-			CurrentJobs:    currentJobs,
-			JobsInProgress: string(jobsJSON),
-			Version:        version,
-			LastHeartbeat:  now,
-			LastTaskTime:   &now,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		}
-		return r.ds.DB(ctx).Create(worker).Error
-	}
-
-	return nil
+	return r.ds.DB(ctx).Exec(sql,
+		workerID, endpoint, workerID, status.String(), currentJobs, string(jobsJSON), versionValue, now, now, now, now,
+		constants.WorkerStatusDraining, // For CASE WHEN in ON DUPLICATE KEY UPDATE
+	).Error
 }
 
 // UpsertFromPod creates or updates worker from pod watch events (status STARTING until heartbeat)

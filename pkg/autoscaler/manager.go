@@ -352,25 +352,26 @@ func (m *Manager) runOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to make decisions: %w", err)
 	}
 
-	if len(decisions) == 0 {
-		logger.DebugCtx(ctx, "no scaling decisions to execute")
-		return nil
-	}
-
-	logger.InfoCtx(ctx, "autoscaler made %d decisions", len(decisions))
-	for _, d := range decisions {
-		if d.ScaleAmount != 0 {
-			logger.InfoCtx(ctx, "decision: endpoint=%s, from=%d, to=%d, amount=%d, priority=%d, approved=%v, reason=%s",
-				d.Endpoint, d.CurrentReplicas, d.DesiredReplicas, d.ScaleAmount, d.Priority, d.Approved, d.Reason)
+	// Step 4: Execute decisions (if any)
+	if len(decisions) > 0 {
+		logger.InfoCtx(ctx, "autoscaler made %d decisions", len(decisions))
+		for _, d := range decisions {
+			if d.ScaleAmount != 0 {
+				logger.InfoCtx(ctx, "decision: endpoint=%s, from=%d, to=%d, amount=%d, priority=%d, approved=%v, reason=%s",
+					d.Endpoint, d.CurrentReplicas, d.DesiredReplicas, d.ScaleAmount, d.Priority, d.Approved, d.Reason)
+			}
 		}
-	}
 
-	// Step 4: Execute decisions
-	if err := m.executor.ExecuteDecisions(ctx, decisions); err != nil {
-		return fmt.Errorf("failed to execute decisions: %w", err)
+		if err := m.executor.ExecuteDecisions(ctx, decisions); err != nil {
+			return fmt.Errorf("failed to execute decisions: %w", err)
+		}
+	} else {
+		logger.DebugCtx(ctx, "no scaling decisions from decision engine")
 	}
 
 	// Step 4.5: Check for long-idle workers and trigger proactive scale-down
+	// 🔥 CRITICAL: This must run even when there are no decisions from decision engine
+	// because individual workers may be idle even if the endpoint overall is not
 	if err := m.checkAndScaleDownIdleWorkers(ctx, endpoints); err != nil {
 		logger.WarnCtx(ctx, "failed to check idle workers: %v", err)
 		// Don't fail the entire autoscaling process if idle worker check fails
@@ -458,13 +459,20 @@ func (m *Manager) runForTargets(ctx context.Context, targets []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to make decisions: %w", err)
 	}
-	if len(decisions) == 0 {
-		logger.DebugCtx(ctx, "no targeted decisions to execute")
-		return nil
+
+	// Execute decisions (if any)
+	if len(decisions) > 0 {
+		if err := m.executor.ExecuteDecisions(ctx, decisions); err != nil {
+			return fmt.Errorf("failed to execute targeted decisions: %w", err)
+		}
+	} else {
+		logger.DebugCtx(ctx, "no targeted decisions from decision engine")
 	}
 
-	if err := m.executor.ExecuteDecisions(ctx, decisions); err != nil {
-		return fmt.Errorf("failed to execute targeted decisions: %w", err)
+	// 🔥 CRITICAL: Also check for long-idle workers in targeted endpoints
+	// This ensures worker-level idle check runs even when no endpoint-level decisions
+	if err := m.checkAndScaleDownIdleWorkers(ctx, filtered); err != nil {
+		logger.WarnCtx(ctx, "failed to check idle workers in targeted run: %v", err)
 	}
 
 	return nil
