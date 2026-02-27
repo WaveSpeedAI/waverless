@@ -145,6 +145,17 @@ type LoggerConfig struct {
 	Level  string           `yaml:"level"`  // debug, info, warn, error
 	Output string           `yaml:"output"` // console, file, both
 	File   LoggerFileConfig `yaml:"file"`
+	CLS    CLSLogConfig     `yaml:"cls"` // CLS 腾讯云日志服务配置
+}
+
+// CLSLogConfig CLS 日志配置
+type CLSLogConfig struct {
+	Enabled   bool   `yaml:"enabled"`    // 是否启用 CLS
+	TopicID   string `yaml:"topic_id"`   // 日志主题 ID
+	Endpoint  string `yaml:"endpoint"`   // 地域接入点
+	SecretID  string `yaml:"secret_id"`  // 腾讯云 SecretId
+	SecretKey string `yaml:"secret_key"` // 腾讯云 SecretKey
+	Source    string `yaml:"source"`     // 服务标识
 }
 
 // LoggerFileConfig logger file configuration

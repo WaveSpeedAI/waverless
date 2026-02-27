@@ -45,6 +45,15 @@ logger:
   output: both          # Output mode: console, file, both
   file:
     path: /tmp/log/waverless/app.log
+  # CLS (腾讯云日志服务) 配置 - 可选，不配置则只输出到控制台/文件
+  # 也可通过环境变量配置: CLS_TOPIC_ID, CLS_ENDPOINT, TENCENTCLOUD_SECRET_ID, TENCENTCLOUD_SECRET_KEY, CLS_SOURCE
+  cls:
+    enabled: false                                    # 是否启用 CLS
+    topic_id: ""                                      # 日志主题 ID
+    endpoint: "na-siliconvalley.cls.tencentcs.com"   # 地域接入点
+    secret_id: ""                                     # 腾讯云 SecretId
+    secret_key: ""                                    # 腾讯云 SecretKey
+    source: "waverless"                               # 服务标识
 
 k8s:
   enabled: true                  # Enable K8s functionality

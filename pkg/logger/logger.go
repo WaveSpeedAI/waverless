@@ -14,6 +14,7 @@ import (
 
 var Log *zap.Logger
 var sugar *zap.SugaredLogger
+var clsCore *CLSCore // CLS core 用于关闭时清理
 
 const (
 	defaultTraceID = "0"
@@ -81,14 +82,30 @@ func Init() error {
 		syncer = zapcore.AddSync(os.Stdout)
 	}
 
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
+	// 基础 core（控制台/文件）- 使用 JSON 格式
+	baseCore := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderConfig),
 		syncer,
 		atomicLevel,
 	)
 
-	// Create logger
-	Log = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	// 尝试初始化 CLS core（优先环境变量，其次配置文件）
+	var cores []zapcore.Core
+	cores = append(cores, baseCore)
+
+	if clsCfg := GetCLSConfig(&cfg.CLS); clsCfg != nil {
+		if cc, err := NewCLSCore(*clsCfg, atomicLevel.Level(), zapcore.NewJSONEncoder(encoderConfig)); err == nil {
+			cores = append(cores, cc)
+			clsCore = cc
+			// 使用标准库 log 输出，避免循环依赖
+			println("[INFO] CLS logging enabled, topic:", clsCfg.TopicID)
+		} else {
+			println("[WARN] CLS init failed:", err.Error())
+		}
+	}
+
+	// Create logger with tee core
+	Log = zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddCallerSkip(1))
 	sugar = Log.Sugar()
 
 	return nil
@@ -108,7 +125,7 @@ func getLogWriter(cfg config.LoggerConfig) zapcore.WriteSyncer {
 	if maxAge == 0 {
 		maxAge = 7
 	}
-	
+
 	return zapcore.AddSync(&lumberjack.Logger{
 		Filename:   cfg.File.Path,
 		MaxSize:    maxSize,
@@ -220,4 +237,12 @@ func FatalCtx(ctx context.Context, format string, args ...interface{}) {
 // Sync flushes any buffered log entries
 func Sync() error {
 	return Log.Sync()
+}
+
+// Close 关闭 logger，包括 CLS producer
+func Close() {
+	if clsCore != nil {
+		clsCore.Close()
+	}
+	Log.Sync()
 }
