@@ -319,6 +319,15 @@ func (e *DecisionEngine) shouldScaleDown(ctx context.Context, ep *EndpointConfig
 		return nil
 	}
 
+	// 🔥 CRITICAL: Skip scale down if no workers are ready yet
+	// ActualReplicas (ReadyReplicas) = 0 means all workers are still starting up
+	// We should not scale down an endpoint that hasn't finished initializing
+	if ep.ActualReplicas == 0 && currentReplicas > 0 {
+		logger.DebugCtx(ctx, "endpoint %s: skip scale down, no ready workers yet (desired=%d, ready=%d)",
+			ep.Name, currentReplicas, ep.ActualReplicas)
+		return nil
+	}
+
 	// 2. Check if there are queued tasks
 	if ep.PendingTasks > 0 {
 		logger.DebugCtx(ctx, "endpoint %s: skip scale down, has pending tasks (pending=%d)",
@@ -348,12 +357,15 @@ func (e *DecisionEngine) shouldScaleDown(ctx context.Context, ep *EndpointConfig
 	// 🔥 FIX: For workers that never processed tasks, we should NOT immediately scale down
 	// They might still be starting up. Use endpoint creation time or last scale time as baseline.
 	var idleBaseline time.Time
+	var idleBaselineSource string
 	if !ep.LastTaskTime.IsZero() {
 		idleBaseline = ep.LastTaskTime
+		idleBaselineSource = "LastTaskTime"
 	} else if !ep.LastScaleTime.IsZero() {
 		// Never processed tasks, use last scale time as baseline
 		// This gives new workers time to start up before being considered "idle"
 		idleBaseline = ep.LastScaleTime
+		idleBaselineSource = "LastScaleTime"
 	} else {
 		// No baseline available, skip scale down for safety
 		// This prevents scaling down workers that just started
@@ -362,7 +374,15 @@ func (e *DecisionEngine) shouldScaleDown(ctx context.Context, ep *EndpointConfig
 		return nil
 	}
 
-	idleDuration := time.Since(idleBaseline)
+	now := time.Now()
+	idleDuration := now.Sub(idleBaseline)
+
+	// 🔍 DEBUG: Log detailed idle time calculation for troubleshooting
+	logger.InfoCtx(ctx, "endpoint %s: idle check - source=%s, baseline=%s, now=%s, idleDuration=%.0fs, threshold=%ds, LastTaskTime=%s, LastScaleTime=%s",
+		ep.Name, idleBaselineSource, idleBaseline.Format("2006-01-02 15:04:05.000"), now.Format("2006-01-02 15:04:05.000"),
+		idleDuration.Seconds(), ep.ScaleDownIdleTime,
+		ep.LastTaskTime.Format("2006-01-02 15:04:05.000"), ep.LastScaleTime.Format("2006-01-02 15:04:05.000"))
+
 	if idleDuration.Seconds() < float64(ep.ScaleDownIdleTime) {
 		logger.DebugCtx(ctx, "endpoint %s: skip scale down, idle time not reached (idle=%.0fs, threshold=%ds)",
 			ep.Name, idleDuration.Seconds(), ep.ScaleDownIdleTime)

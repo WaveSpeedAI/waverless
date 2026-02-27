@@ -848,6 +848,13 @@ func (m *Manager) checkAndScaleDownIdleWorkers(ctx context.Context, endpoints []
 				continue
 			}
 
+			// 🔥 CRITICAL: Skip STARTING workers - they haven't finished initialization yet
+			// STARTING workers should not be considered for idle scale-down
+			if w.Status == model.WorkerStatusStarting {
+				logger.DebugCtx(ctx, "endpoint %s: skipping STARTING worker %s for idle check", ep.Name, w.ID)
+				continue
+			}
+
 			// Check idle time
 			var idleTime time.Duration
 			if w.LastTaskTime.IsZero() {
