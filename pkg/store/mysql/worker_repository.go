@@ -47,22 +47,32 @@ func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoi
 
 	// Use raw SQL with ON DUPLICATE KEY UPDATE to handle race conditions
 	// This is atomic and avoids the UPDATE-then-INSERT race condition
+	// CRITICAL: Protect both DRAINING and OFFLINE terminal states from being overwritten by heartbeat.
+	// Without this, a ghost PullJobs request (from a deleted Pod) can resurrect an OFFLINE worker
+	// back to ONLINE, then IsPodTerminating marks it DRAINING, creating an uncleanable zombie worker.
+	// Also protect last_heartbeat in terminal states so CleanupOfflineWorkers can expire them.
 	sql := `
 		INSERT INTO workers (worker_id, endpoint, pod_name, status, concurrency, current_jobs, jobs_in_progress, version, last_heartbeat, last_task_time, created_at, updated_at)
 		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			endpoint = VALUES(endpoint),
-			status = CASE WHEN status = ? THEN status ELSE VALUES(status) END,
-			current_jobs = VALUES(current_jobs),
-			jobs_in_progress = VALUES(jobs_in_progress),
+			status = CASE WHEN status IN (?, ?) THEN status ELSE VALUES(status) END,
+			current_jobs = CASE WHEN status IN (?, ?) THEN current_jobs ELSE VALUES(current_jobs) END,
+			jobs_in_progress = CASE WHEN status IN (?, ?) THEN jobs_in_progress ELSE VALUES(jobs_in_progress) END,
 			version = CASE WHEN VALUES(version) = '' THEN version ELSE VALUES(version) END,
-			last_heartbeat = VALUES(last_heartbeat),
+			last_heartbeat = CASE WHEN status IN (?, ?) THEN last_heartbeat ELSE VALUES(last_heartbeat) END,
 			updated_at = VALUES(updated_at)
 	`
 
+	draining := constants.WorkerStatusDraining.String()
+	offline := constants.WorkerStatusOffline.String()
+
 	return r.ds.DB(ctx).Exec(sql,
 		workerID, endpoint, workerID, status.String(), currentJobs, string(jobsJSON), versionValue, now, now, now, now,
-		constants.WorkerStatusDraining, // For CASE WHEN in ON DUPLICATE KEY UPDATE
+		draining, offline, // status CASE
+		draining, offline, // current_jobs CASE
+		draining, offline, // jobs_in_progress CASE
+		draining, offline, // last_heartbeat CASE
 	).Error
 }
 
