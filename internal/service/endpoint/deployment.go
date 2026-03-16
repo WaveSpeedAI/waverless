@@ -59,7 +59,6 @@ func NewDeploymentManager(provider interfaces.DeploymentProvider, metadata *Meta
 // 4. If image doesn't exist, return error with suggestion
 // 5. If validation times out and SkipOnTimeout=true, log warning and proceed
 // 6. If validation times out and SkipOnTimeout=false, return error
-//
 func (m *DeploymentManager) Deploy(ctx context.Context, req *interfaces.DeployRequest, metadata *interfaces.EndpointMetadata) (*interfaces.DeployResponse, error) {
 	if m.provider == nil {
 		return nil, fmt.Errorf("deployment provider not configured")
@@ -266,6 +265,12 @@ func (m *DeploymentManager) Update(ctx context.Context, req *interfaces.UpdateDe
 			}
 			if req.Env != nil {
 				meta.Env = *req.Env
+			}
+			if req.VolumeMounts != nil {
+				meta.VolumeMounts = *req.VolumeMounts
+			}
+			if req.ShmSize != nil {
+				meta.ShmSize = *req.ShmSize
 			}
 			if err := m.metadata.Save(ctx, meta); err != nil {
 				return resp, fmt.Errorf("deployment updated but failed to persist metadata: %w", err)

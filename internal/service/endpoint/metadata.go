@@ -79,6 +79,27 @@ func (m *MetadataManager) Save(ctx context.Context, endpoint *interfaces.Endpoin
 		existing.Labels = mysqlEndpoint.Labels
 		existing.Status = mysqlEndpoint.Status
 		existing.UpdatedAt = mysqlEndpoint.UpdatedAt
+
+		// Sync volumeMounts and shmSize into RuntimeState (they live in this JSON column)
+		if endpoint.VolumeMounts != nil || endpoint.ShmSize != "" {
+			if existing.RuntimeState == nil {
+				existing.RuntimeState = make(mysql.JSONMap)
+			}
+			if endpoint.ShmSize != "" {
+				existing.RuntimeState["shmSize"] = endpoint.ShmSize
+			}
+			if endpoint.VolumeMounts != nil {
+				vms := make([]map[string]string, len(endpoint.VolumeMounts))
+				for i, vm := range endpoint.VolumeMounts {
+					vms[i] = map[string]string{
+						"pvcName":   vm.PVCName,
+						"mountPath": vm.MountPath,
+					}
+				}
+				existing.RuntimeState["volumeMounts"] = vms
+			}
+		}
+
 		if err := m.endpointRepo.Update(ctx, existing); err != nil {
 			return fmt.Errorf("failed to update endpoint: %w", err)
 		}
