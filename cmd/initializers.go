@@ -287,6 +287,7 @@ func (app *Application) initHandlers() error {
 	app.workerHandler = handler.NewWorkerHandler(app.workerService, app.taskService, app.deploymentProvider)
 	app.statisticsHandler = handler.NewStatisticsHandler(app.statisticsService, app.workerService)
 	app.monitoringHandler = handler.NewMonitoringHandler(app.monitoringService)
+	app.portalHandler = handler.NewPortalHandler(app.taskService, app.workerService, app.endpointService, app.deploymentProvider)
 
 	// Initialize Endpoint Handler (for K8s or Novita)
 	if app.config.K8s.Enabled || app.config.Novita.Enabled {
@@ -422,7 +423,18 @@ func (app *Application) setupResourceReleaser() error {
 // initHTTPServer initializes HTTP server
 func (app *Application) initHTTPServer() error {
 	// Initialize router
-	r := router.NewRouter(app.taskHandler, app.workerHandler, app.endpointHandler, app.autoscalerHandler, app.statisticsHandler, app.specHandler, app.imageHandler, app.monitoringHandler, app.statusEventHandler)
+	r := router.NewRouter(
+		app.taskHandler,
+		app.workerHandler,
+		app.endpointHandler,
+		app.autoscalerHandler,
+		app.statisticsHandler,
+		app.specHandler,
+		app.imageHandler,
+		app.monitoringHandler,
+		app.statusEventHandler,
+		app.portalHandler,
+	)
 
 	// Set Gin mode
 	gin.SetMode(app.config.Server.Mode)

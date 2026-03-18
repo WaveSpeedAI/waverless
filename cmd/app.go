@@ -53,6 +53,7 @@ type Application struct {
 	imageHandler       *handler.ImageHandler
 	monitoringHandler  *handler.MonitoringHandler
 	statusEventHandler *handler.StatusEventHandler
+	portalHandler      *handler.PortalHandler
 
 	// Lifecycle Manager
 	lifecycleManager *lifecycle.Manager
