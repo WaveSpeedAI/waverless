@@ -18,6 +18,7 @@ type Handlers struct {
 	Image       *handler.ImageHandler
 	Monitoring  *handler.MonitoringHandler
 	StatusEvent *handler.StatusEventHandler
+	Portal      *handler.PortalHandler
 }
 
 // Router is the main router structure
@@ -33,6 +34,7 @@ type Router struct {
 	imageHandler       *handler.ImageHandler
 	monitoringHandler  *handler.MonitoringHandler
 	statusEventHandler *handler.StatusEventHandler
+	portalHandler      *handler.PortalHandler
 }
 
 // NewRouter creates a new Router
@@ -46,6 +48,7 @@ func NewRouter(
 	imageHandler *handler.ImageHandler,
 	monitoringHandler *handler.MonitoringHandler,
 	statusEventHandler *handler.StatusEventHandler,
+	portalHandler *handler.PortalHandler,
 ) *Router {
 	handlers := &Handlers{
 		Task:        taskHandler,
@@ -57,6 +60,7 @@ func NewRouter(
 		Image:       imageHandler,
 		Monitoring:  monitoringHandler,
 		StatusEvent: statusEventHandler,
+		Portal:      portalHandler,
 	}
 
 	return &Router{
@@ -70,6 +74,7 @@ func NewRouter(
 		imageHandler:       imageHandler,
 		monitoringHandler:  monitoringHandler,
 		statusEventHandler: statusEventHandler,
+		portalHandler:      portalHandler,
 	}
 }
 
@@ -83,5 +88,6 @@ func (r *Router) Setup(engine *gin.Engine) {
 	r.setupV1Routes(engine)     // Client API (/v1/*)
 	r.setupV2Routes(engine)     // Worker API (/v2/*)
 	r.setupAdminRoutes(engine)  // Admin API (/api/v1/*)
+	r.setupPortalRoutes(engine) // Portal Southbound API (/portal/v1/*)
 	r.setupHealthRoutes(engine) // Health check
 }
