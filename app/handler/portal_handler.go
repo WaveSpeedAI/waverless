@@ -53,18 +53,20 @@ type portalInstanceHealthResponse struct {
 }
 
 type portalTaskResponse struct {
-	TaskID          string  `json:"task_id"`
-	Status          string  `json:"status"`
-	EndpointID      string  `json:"endpoint_id,omitempty"`
-	PhysicalName    string  `json:"physical_name"`
-	WorkerID        string  `json:"worker_id,omitempty"`
-	DelayTimeMS     int64   `json:"delay_time_ms,omitempty"`
-	ExecutionTimeMS int64   `json:"execution_time_ms,omitempty"`
-	CreatedAt       string  `json:"created_at,omitempty"`
-	StartedAt       *string `json:"started_at"`
-	CompletedAt     *string `json:"completed_at"`
-	Error           string  `json:"error,omitempty"`
-	RequestID       string  `json:"request_id,omitempty"`
+	TaskID          string                 `json:"task_id"`
+	Status          string                 `json:"status"`
+	EndpointID      string                 `json:"endpoint_id,omitempty"`
+	PhysicalName    string                 `json:"physical_name"`
+	WorkerID        string                 `json:"worker_id,omitempty"`
+	DelayTimeMS     int64                  `json:"delay_time_ms,omitempty"`
+	ExecutionTimeMS int64                  `json:"execution_time_ms,omitempty"`
+	CreatedAt       string                 `json:"created_at,omitempty"`
+	Input           map[string]interface{} `json:"input,omitempty"`
+	Output          map[string]interface{} `json:"output,omitempty"`
+	StartedAt       *string                `json:"started_at"`
+	CompletedAt     *string                `json:"completed_at"`
+	Error           string                 `json:"error,omitempty"`
+	RequestID       string                 `json:"request_id,omitempty"`
 }
 
 type portalCancelTaskResponse struct {
@@ -116,21 +118,32 @@ type portalEndpointResponse struct {
 }
 
 type portalWorkerResponse struct {
-	WorkerID          string  `json:"worker_id"`
-	Endpoint          string  `json:"endpoint"`
-	PodName           string  `json:"pod_name,omitempty"`
-	Status            string  `json:"status"`
-	Concurrency       int     `json:"concurrency"`
-	CurrentJobs       int     `json:"current_jobs"`
-	Version           string  `json:"version,omitempty"`
-	LastHeartbeat     string  `json:"last_heartbeat"`
-	TerminatedAt      *string `json:"terminated_at,omitempty"`
-	PodStartedAt      *string `json:"pod_started_at,omitempty"`
-	FailureType       string  `json:"failure_type,omitempty"`
-	FailureReason     string  `json:"failure_reason,omitempty"`
-	FailureSuggestion string  `json:"failure_suggestion,omitempty"`
-	FailureOccurredAt *string `json:"failure_occurred_at,omitempty"`
-	RequestID         string  `json:"request_id,omitempty"`
+	WorkerID             string   `json:"worker_id"`
+	Endpoint             string   `json:"endpoint"`
+	PodName              string   `json:"pod_name,omitempty"`
+	Status               string   `json:"status"`
+	Concurrency          int      `json:"concurrency"`
+	CurrentJobs          int      `json:"current_jobs"`
+	TotalTasksCompleted  int64    `json:"total_tasks_completed,omitempty"`
+	TotalTasksFailed     int64    `json:"total_tasks_failed,omitempty"`
+	TotalExecutionTimeMS int64    `json:"total_execution_time_ms,omitempty"`
+	Version              string   `json:"version,omitempty"`
+	CreatedAt            string   `json:"created_at,omitempty"`
+	UpdatedAt            string   `json:"updated_at,omitempty"`
+	LastHeartbeat        string   `json:"last_heartbeat"`
+	TerminatedAt         *string  `json:"terminated_at,omitempty"`
+	PodStartedAt         *string  `json:"pod_started_at,omitempty"`
+	FailureType          string   `json:"failure_type,omitempty"`
+	FailureReason        string   `json:"failure_reason,omitempty"`
+	FailureSuggestion    string   `json:"failure_suggestion,omitempty"`
+	FailureOccurredAt    *string  `json:"failure_occurred_at,omitempty"`
+	PendingPhase         string   `json:"pending_phase,omitempty"`
+	PendingPhaseSince    *string  `json:"pending_phase_since,omitempty"`
+	PendingReason        string   `json:"pending_reason,omitempty"`
+	PendingMessage       string   `json:"pending_message,omitempty"`
+	SpotPrice            *float64 `json:"spot_price,omitempty"`
+	SpotInstanceType     string   `json:"spot_instance_type,omitempty"`
+	RequestID            string   `json:"request_id,omitempty"`
 }
 
 // GetInstanceInfo returns static instance metadata for portal capability discovery.
@@ -198,6 +211,8 @@ func (h *PortalHandler) GetTask(c *gin.Context) {
 		DelayTimeMS:     resp.DelayTime,
 		ExecutionTimeMS: resp.ExecutionMS,
 		CreatedAt:       resp.CreatedAt,
+		Input:           resp.Input,
+		Output:          resp.Output,
 		StartedAt:       nil,
 		CompletedAt:     nil,
 		Error:           resp.Error,
@@ -328,15 +343,20 @@ func (h *PortalHandler) GetWorker(c *gin.Context) {
 
 	requestID := c.GetString("portal_request_id")
 	resp := portalWorkerResponse{
-		WorkerID:      worker.WorkerID,
-		Endpoint:      worker.Endpoint,
-		PodName:       worker.PodName,
-		Status:        worker.Status,
-		Concurrency:   worker.Concurrency,
-		CurrentJobs:   worker.CurrentJobs,
-		Version:       worker.Version,
-		LastHeartbeat: worker.LastHeartbeat.Format(time.RFC3339),
-		RequestID:     requestID,
+		WorkerID:             worker.WorkerID,
+		Endpoint:             worker.Endpoint,
+		PodName:              worker.PodName,
+		Status:               worker.Status,
+		Concurrency:          worker.Concurrency,
+		CurrentJobs:          worker.CurrentJobs,
+		TotalTasksCompleted:  worker.TotalTasksCompleted,
+		TotalTasksFailed:     worker.TotalTasksFailed,
+		TotalExecutionTimeMS: worker.TotalExecutionTimeMs,
+		Version:              worker.Version,
+		CreatedAt:            worker.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:            worker.UpdatedAt.Format(time.RFC3339),
+		LastHeartbeat:        worker.LastHeartbeat.Format(time.RFC3339),
+		RequestID:            requestID,
 	}
 
 	if worker.TerminatedAt != nil {
@@ -358,6 +378,23 @@ func (h *PortalHandler) GetWorker(c *gin.Context) {
 			failureOccurredAt := worker.FailureOccurredAt.Format(time.RFC3339)
 			resp.FailureOccurredAt = &failureOccurredAt
 		}
+	}
+	if worker.PendingPhase != nil {
+		resp.PendingPhase = *worker.PendingPhase
+	}
+	if worker.PendingPhaseSince != nil {
+		pendingPhaseSince := worker.PendingPhaseSince.Format(time.RFC3339)
+		resp.PendingPhaseSince = &pendingPhaseSince
+	}
+	if worker.PendingReason != nil {
+		resp.PendingReason = *worker.PendingReason
+	}
+	if worker.PendingMessage != nil {
+		resp.PendingMessage = *worker.PendingMessage
+	}
+	resp.SpotPrice = worker.SpotPrice
+	if worker.SpotInstanceType != nil {
+		resp.SpotInstanceType = *worker.SpotInstanceType
 	}
 
 	c.JSON(http.StatusOK, resp)
