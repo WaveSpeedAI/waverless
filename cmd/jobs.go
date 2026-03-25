@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"waverless/internal/jobs"
 	"waverless/internal/service"
@@ -269,15 +270,38 @@ func (app *Application) cleanupStuckTerminatingPods(k8sProvider *k8s.K8sDeployme
 			continue
 		}
 
-		// Execute pkill -9 1 to kill the main process (PID 1) in container
-		// This will cause container to exit and pod to terminate naturally
-		stdout, stderr, err := k8sProvider.ExecPodCommand(ctx, pod.Name, endpoint, []string{"sh", "-c", "pkill -9 1"})
-		if err != nil {
-			logger.ErrorCtx(ctx, "Failed to kill main process in pod %s: %v, stdout: %s, stderr: %s",
-				pod.Name, err, stdout, stderr)
-		} else {
-			logger.InfoCtx(ctx, "✅ Successfully killed main process in pod %s (stdout: %s, stderr: %s)",
-				pod.Name, stdout, stderr)
+		// Kill the main process (PID 1) in container to trigger natural exit.
+		// Try "kill -9 1" first (shell builtin, works in most containers),
+		// fallback to "pkill -9 1" (requires procps, not always available).
+		killed := false
+		for _, cmd := range [][]string{
+			{"sh", "-c", "kill -9 1"},
+			{"sh", "-c", "pkill -9 1"},
+		} {
+			stdout, stderr, err := k8sProvider.ExecPodCommand(ctx, pod.Name, endpoint, cmd)
+			if err == nil {
+				logger.InfoCtx(ctx, "✅ Successfully killed main process in pod %s via '%v' (stdout: %s, stderr: %s)",
+					pod.Name, cmd, stdout, stderr)
+				killed = true
+				break
+			}
+			logger.WarnCtx(ctx, "Command '%v' failed in pod %s: %v, stdout: %s, stderr: %s",
+				cmd, pod.Name, err, stdout, stderr)
+		}
+		if !killed {
+			// Last resort: delete pod with short grace period (30s).
+			// Not as clean as killing PID 1 (containerd may not fully release GPU resources),
+			// but better than leaving the pod stuck for the full terminationGracePeriodSeconds.
+			logger.WarnCtx(ctx, "⚠️ All kill attempts failed for pod %s, falling back to short grace period delete (30s)", pod.Name)
+			gracePeriod := int64(30)
+			delErr := k8sProvider.GetClientset().CoreV1().Pods(k8sProvider.GetNamespace()).Delete(
+				ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriod},
+			)
+			if delErr != nil {
+				logger.ErrorCtx(ctx, "Failed to delete pod %s with short grace period: %v", pod.Name, delErr)
+			} else {
+				logger.InfoCtx(ctx, "✅ Deleted pod %s with 30s grace period", pod.Name)
+			}
 		}
 	}
 }
