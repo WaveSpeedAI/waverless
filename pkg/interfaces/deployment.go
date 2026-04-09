@@ -206,8 +206,9 @@ type UpdateDeploymentRequest struct {
 	VolumeMounts *[]VolumeMount     `json:"volumeMounts,omitempty"` // New volume mounts (optional, use pointer to distinguish empty from unset)
 	ShmSize      *string            `json:"shmSize,omitempty"`      // New shared memory size (optional, use pointer to distinguish empty from unset)
 	EnablePtrace *bool              `json:"enablePtrace,omitempty"` // Enable SYS_PTRACE capability (optional, use pointer to distinguish false from unset)
-	Env         *map[string]string `json:"env,omitempty"`         // New environment variables (optional, use pointer to distinguish empty from unset)
-	TaskTimeout *int               `json:"taskTimeout,omitempty"` // New task timeout (optional)
+	Env                *map[string]string  `json:"env,omitempty"`                // New environment variables (optional, use pointer to distinguish empty from unset)
+	TaskTimeout        *int                `json:"taskTimeout,omitempty"`        // New task timeout (optional)
+	RegistryCredential *RegistryCredential `json:"registryCredential,omitempty"` // Registry credential for private images (optional)
 }
 
 // UpdateEndpointConfigRequest update Endpoint configuration request (metadata + autoscaling configuration)

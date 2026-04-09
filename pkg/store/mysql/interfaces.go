@@ -64,7 +64,7 @@ type WorkerRepositoryInterface interface {
 	UpdateStatus(ctx context.Context, workerID string, status string) error
 	UpdateHeartbeat(ctx context.Context, workerID, endpoint string, jobsInProgress []string, jobsInProgressCount int, version string) error
 	UpdateLastTaskTime(ctx context.Context, workerID string) error
-	UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt *time.Time) error
+	UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt, deletionTimestamp *time.Time) error
 
 	// Statistics updates
 	IncrementTaskStats(ctx context.Context, workerID string, completed bool, executionTimeMs int64) error

@@ -1,182 +1,132 @@
 package gmi
 
 import (
-	"strings"
-
 	"waverless/pkg/interfaces"
 )
 
 // ========================================
-// Spec name → GPU type mapping
+// BFF Phase → waverless Status mapping
 // ========================================
 
-// specToGPUTypeMap maps waverless spec names to GPU type IDs used by gmiless
-var specToGPUTypeMap = map[string]string{
-	"h100-single-hbm3": "NVIDIA-H100-80GB-HBM3",
-	"h100-single":      "NVIDIA-H100-80GB-HBM3",
-	"h100-pcie-single": "NVIDIA-H100-PCIe",
-	"a100-single":      "NVIDIA-A100-80GB-PCIe",
-	"5090-single":      "NVIDIA-GeForce-RTX-5090",
-	"4090-single":      "NVIDIA-GeForce-RTX-4090",
-	"a6000-single":     "NVIDIA-RTX-A6000",
-	"l40-single":       "NVIDIA-L40",
-}
-
-// specNameToGPUType converts a waverless spec name to a gmiless GPU type ID.
-// If no mapping exists, returns the spec name as-is (assumes it's already a GPU type).
-func specNameToGPUType(specName string) string {
-	if gpuType, ok := specToGPUTypeMap[specName]; ok {
-		return gpuType
+// mapPhaseToStatus converts ieops-v2 ModelDeployment Phase to waverless status string.
+func mapPhaseToStatus(phase string) string {
+	switch phase {
+	case "Running":
+		return "RUNNING"
+	case "Deploying":
+		return "DEPLOYING"
+	case "Draining":
+		return "DRAINING"
+	case "", "Pending", "Scheduling", "WaitingForGPU", "Planned":
+		return "PENDING"
+	case "Failed":
+		return "FAILED"
+	default:
+		return "UNKNOWN"
 	}
-	return specName
 }
 
 // ========================================
-// Response → AppInfo conversion
+// BFF response → waverless interfaces conversion
 // ========================================
 
-// convertToAppInfo converts gmiless endpoint response to waverless AppInfo
-func convertToAppInfo(resp *gmiEndpointResponse) *interfaces.AppInfo {
-	status := resp.Status
-	if status == "" {
-		if resp.Replicas == 0 {
-			status = "Stopped"
-		} else {
-			status = "Pending"
-		}
-	}
-
-	// Count ready workers
-	var readyReplicas, availableReplicas int32
-	for _, w := range resp.Workers {
-		if strings.EqualFold(w.DesiredStatus, "ONLINE") || strings.EqualFold(w.DesiredStatus, "BUSY") {
-			availableReplicas++
-			readyReplicas++
-		}
-	}
-
-	image := resp.Image
-	if image == "" && resp.Template != nil {
-		image = resp.Template.ImageName
-	}
-
+// convertBFFModelToAppInfo converts a BFF model response to waverless AppInfo.
+func convertBFFModelToAppInfo(m *bffModelResponse) *interfaces.AppInfo {
 	return &interfaces.AppInfo{
-		Name:              resp.Name,
-		Status:            status,
-		Replicas:          int32(resp.Replicas),
-		ReadyReplicas:     readyReplicas,
-		AvailableReplicas: availableReplicas,
-		Image:             image,
+		Name:              m.Name,
+		Status:            mapPhaseToStatus(m.Status),
+		Replicas:          m.DesiredReplicas,
+		ReadyReplicas:     m.ReadyReplicas,
+		AvailableReplicas: m.AvailableReplicas,
+		Image:             m.Image,
+		CreatedAt:         m.CreatedAt,
+		ShmSize:           m.ShmSize,
 		Labels:            map[string]string{},
-		CreatedAt:         resp.CreatedAt,
+	}
+}
+
+// convertBFFPodToPodInfo converts a BFF pod status to waverless PodInfo.
+func convertBFFPodToPodInfo(pod *bffPodStatus) *interfaces.PodInfo {
+	status := pod.Phase
+	if pod.Ready {
+		status = "Running"
+	}
+
+	reason := pod.Reason
+	message := pod.Message
+	if pod.Ready && reason == "" {
+		reason = "Ready"
+		message = "All containers are ready"
+	}
+
+	return &interfaces.PodInfo{
+		Name:              pod.PodName,
+		WorkerID:          pod.PodName, // ieops-v2: workerID = podName
+		NodeName:          pod.NodeID,
+		Phase:             pod.Phase,
+		Status:            status,
+		Reason:            reason,
+		Message:           message,
+		CreatedAt:         pod.CreatedAt,
+		StartedAt:         pod.StartedAt,
+		ReadyAt:           pod.ReadyAt,
+		DeletionTimestamp: pod.DeletionTimestamp,
+		RestartCount:      pod.RestartCount,
+		Labels:            map[string]string{},
 	}
 }
 
 // ========================================
-// Response → PodInfo / PodDetail conversion
+// BFF request builders
 // ========================================
 
-// convertPodInfoFromGMI converts gmiPodInfo to interfaces.PodInfo
-func convertPodInfoFromGMI(pod *gmiPodInfo) *interfaces.PodInfo {
-	return &interfaces.PodInfo{
-		Name:      pod.Name,
-		Phase:     pod.Phase,
-		Status:    pod.Status,
-		Reason:    pod.Reason,
-		Message:   pod.Message,
-		IP:        pod.IP,
-		NodeName:  pod.NodeName,
-		CreatedAt: pod.CreatedAt,
-		StartedAt: pod.StartedAt,
-		Labels:    pod.Labels,
-	}
+// gpuProfileInfo holds GPU family and compute capability for BFF gpuProfile.
+type gpuProfileInfo struct {
+	Family string
+	MinCC  string
 }
 
-// convertPodDetailFromGMI converts gmiPodInfo to interfaces.PodDetail
-func convertPodDetailFromGMI(pod *gmiPodInfo) *interfaces.PodDetail {
-	// Convert containers
-	containers := make([]interfaces.ContainerInfo, len(pod.Containers))
-	for i, c := range pod.Containers {
-		env := make([]interfaces.EnvVar, 0, len(c.Env))
-		for _, e := range c.Env {
-			env = append(env, interfaces.EnvVar{Name: e.Name, Value: e.Value})
-		}
-
-		resources := make(map[string]interface{})
-		if len(c.Resources.Requests) > 0 || len(c.Resources.Limits) > 0 {
-			resources["requests"] = c.Resources.Requests
-			resources["limits"] = c.Resources.Limits
-		}
-
-		state := "Running"
-		if !c.Ready {
-			state = "Waiting"
-		}
-
-		containers[i] = interfaces.ContainerInfo{
-			Name:      c.Name,
-			Image:     c.Image,
-			State:     state,
-			Ready:     c.Ready,
-			Resources: resources,
-			Env:       env,
-		}
-	}
-
-	// Convert conditions
-	conditions := make([]interfaces.PodCondition, len(pod.Conditions))
-	for i, c := range pod.Conditions {
-		conditions[i] = interfaces.PodCondition{
-			Type:               c.Type,
-			Status:             c.Status,
-			LastTransitionTime: c.LastTransitionTime,
-		}
-	}
-
-	// Convert volumes
-	volumes := make([]interfaces.VolumeInfo, len(pod.Volumes))
-	for i, v := range pod.Volumes {
-		volumes[i] = interfaces.VolumeInfo{Name: v.Name, Type: v.Type}
-	}
-
-	return &interfaces.PodDetail{
-		PodInfo: &interfaces.PodInfo{
-			Name:         pod.Name,
-			Phase:        pod.Phase,
-			Status:       pod.Status,
-			Reason:       pod.Reason,
-			Message:      pod.Message,
-			IP:           pod.IP,
-			NodeName:     pod.NodeName,
-			CreatedAt:    pod.CreatedAt,
-			StartedAt:    pod.StartedAt,
-			Labels:       pod.Labels,
-			RestartCount: int32(pod.RestartCount),
-		},
-		Namespace:   pod.Namespace,
-		UID:         pod.UID,
-		Annotations: pod.Annotations,
-		Containers:  containers,
-		Conditions:  conditions,
-		Events:      []interfaces.PodEvent{},
-		Volumes:     volumes,
-	}
+// specToGPUProfileMap maps waverless spec names to BFF GPU profile parameters.
+var specToGPUProfileMap = map[string]gpuProfileInfo{
+	"h200-single":      {Family: "H200", MinCC: "9.0"},
+	"h100-single-hbm3": {Family: "H100", MinCC: "9.0"},
+	"h100-single":      {Family: "H100", MinCC: "9.0"},
+	"h100-pcie-single": {Family: "H100", MinCC: "9.0"},
+	"a100-single":      {Family: "A100", MinCC: "8.0"},
+	"5090-single":      {Family: "RTX5090", MinCC: "10.0"},
+	"4090-single":      {Family: "RTX4090", MinCC: "8.9"},
+	"a6000-single":     {Family: "RTXA6000", MinCC: "8.6"},
+	"l40-single":       {Family: "L40", MinCC: "8.9"},
+	"gpu-1x-l40s":      {Family: "L40S", MinCC: "8.9"},
 }
 
-// convertWorkerToPodInfo converts gmiWorkerResponse to interfaces.PodInfo (for status sync)
-func convertWorkerToPodInfo(worker *gmiWorkerResponse, endpoint string) *interfaces.PodInfo {
-	status := worker.DesiredStatus
-	phase := "Running"
-	if strings.EqualFold(status, "STARTING") {
-		phase = "Pending"
+// buildBFFGPUProfile builds a BFF gpuProfile from a waverless DeployRequest.
+// For CPU-only (gpuCount=0), returns a minimal profile.
+func buildBFFGPUProfile(specName string, gpuCount int) map[string]any {
+	if gpuCount <= 0 {
+		return map[string]any{
+			"gpuCountPerPod": 0,
+		}
 	}
 
-	return &interfaces.PodInfo{
-		Name:      worker.Name,
-		Phase:     phase,
-		Status:    status,
-		CreatedAt: worker.LastStartedAt,
-		StartedAt: worker.LastStartedAt,
-		Labels:    map[string]string{"app": endpoint},
+	profile := map[string]any{
+		"gpuCountPerPod": gpuCount,
 	}
+
+	if info, ok := specToGPUProfileMap[specName]; ok {
+		profile["acceptedFamilies"] = []string{info.Family}
+		profile["minCC"] = info.MinCC
+		profile["optimalFamily"] = info.Family
+	} else if specName != "" {
+		// Unknown spec — use spec name as family hint
+		profile["acceptedFamilies"] = []string{specName}
+		profile["minCC"] = "7.0"
+	} else {
+		// No spec — use generic GPU
+		profile["acceptedFamilies"] = []string{"H100"}
+		profile["minCC"] = "7.0"
+	}
+
+	return profile
 }
+

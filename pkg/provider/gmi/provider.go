@@ -2,7 +2,6 @@ package gmi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,13 +9,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"waverless/pkg/config"
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
+	redisstore "waverless/pkg/store/redis"
 )
 
-// GMIDeploymentProvider implements the DeploymentProvider interface for GMI.
-// It calls the gmiless API (/api/v1/endpoints) for deployment operations.
+// GMIDeploymentProvider implements the DeploymentProvider interface.
+// It calls the ieops-v2 BFF API (/api/v1/models) for deployment operations.
 type GMIDeploymentProvider struct {
 	baseURL      string
 	token        string
@@ -24,9 +26,6 @@ type GMIDeploymentProvider struct {
 	cfg          *config.Config
 	gmiConfig    *config.GMIConfig
 	pollInterval time.Duration
-
-	// Endpoint name → ID cache
-	endpointCache sync.Map
 
 	// Worker state tracking for polling-based sync
 	workerStates   sync.Map // workerID → *gmiWorkerState
@@ -40,6 +39,10 @@ type GMIDeploymentProvider struct {
 	workerDeleteCallbacks     map[uint64]WorkerDeleteCallback
 	workerDeleteCallbacksLock sync.RWMutex
 	nextCallbackID            uint64
+
+	// Redis client for draining workers tracking (multi-replica safe)
+	redisClient   *redis.Client
+	drainingStore *redisstore.DrainingStore
 }
 
 // NewGMIDeploymentProvider creates a new GMI deployment provider.
@@ -76,148 +79,82 @@ func NewGMIDeploymentProvider(cfg *config.Config) (interfaces.DeploymentProvider
 }
 
 // ========================================
-// CoreDeploymentProvider (required)
+// CoreDeploymentProvider (required) — BFF API
 // ========================================
 
 func (p *GMIDeploymentProvider) Deploy(ctx context.Context, req *interfaces.DeployRequest) (*interfaces.DeployResponse, error) {
 	logger.Infof("GMI Deploy: endpoint=%s, image=%s, replicas=%d, spec=%s, gpuCount=%d",
 		req.Endpoint, req.Image, req.Replicas, req.SpecName, req.GpuCount)
 
-	computeType := "GPU"
-	endpointType := "QB"
-
-	// Build template with default env vars merged
+	// Build env: defaults + user env
 	mergedEnv := p.mergeEnv(p.buildDefaultEnv(req.Endpoint), req.Env)
 
-	// Pass registry credential as environment variables for private image pulling
-	if req.RegistryCredential != nil {
-		if req.RegistryCredential.Registry != "" {
-			mergedEnv["REGISTRY_SERVER"] = req.RegistryCredential.Registry
-		}
-		if req.RegistryCredential.Username != "" {
-			mergedEnv["REGISTRY_USERNAME"] = req.RegistryCredential.Username
-		}
-		if req.RegistryCredential.Password != "" {
-			mergedEnv["REGISTRY_PASSWORD"] = req.RegistryCredential.Password
-		}
-	}
-
-	template := &gmiTemplateData{
-		ImageName: &req.Image,
-		Env:       mergedEnv,
+	// Build BFF create request
+	createReq := map[string]any{
+		"name":       req.Endpoint,
+		"model":      req.Endpoint,
+		"image":      req.Image,
+		"replicas":   req.Replicas,
+		"envVars":    mergedEnv,
+		"gpuProfile": buildBFFGPUProfile(req.SpecName, req.GpuCount),
 	}
 	if req.ShmSize != "" {
-		template.ShmSize = &req.ShmSize
+		createReq["shmSize"] = req.ShmSize
+	}
+	if len(req.VolumeMounts) > 0 {
+		createReq["volumeMounts"] = req.VolumeMounts
+	}
+	// Pass registry credential to BFF for K8s imagePullSecrets (not as env vars)
+	if req.RegistryCredential != nil {
+		createReq["registryCredential"] = map[string]string{
+			"registry": req.RegistryCredential.Registry,
+			"username": req.RegistryCredential.Username,
+			"password": req.RegistryCredential.Password,
+		}
 	}
 
-	// Build request matching gmiless EndpointRequest
-	defaultRegions := []string{"us-west1"}
-	gmiReq := &gmiEndpointRequest{
-		Name:          &req.Endpoint,
-		Replicas:      &req.Replicas,
-		GpuCount:      &req.GpuCount,
-		ComputeType:   &computeType,
-		Type:          &endpointType,
-		Template:      template,
-		WorkersMin:    &req.Replicas,
-		WorkersMax:    &req.Replicas,
-		DataCenterIds: &defaultRegions,
+	if err := p.doRequestBFF(ctx, "POST", "/api/v1/models", createReq, nil); err != nil {
+		return nil, fmt.Errorf("failed to deploy via BFF API: %w", err)
 	}
 
-	// Map spec name to GPU type ID
-	if req.SpecName != "" {
-		gpuType := specNameToGPUType(req.SpecName)
-		gmiReq.GpuTypeIds = &[]string{gpuType}
-	}
-
-	// Convert TaskTimeout (seconds) to ExecutionTimeoutMs (milliseconds)
-	if req.TaskTimeout > 0 {
-		timeoutMs := int64(req.TaskTimeout) * 1000
-		gmiReq.ExecutionTimeoutMs = &timeoutMs
-	}
-
-	url := p.baseURL + "/api/v1/endpoints"
-	body, err := p.doRequest(ctx, "POST", url, gmiReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deploy via GMI API: %w", err)
-	}
-
-	// Parse response to get endpoint ID
-	var resp gmiEndpointResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		logger.Warnf("GMI Deploy: failed to parse response: %v, body=%s", err, string(body))
-	} else if resp.Id != "" {
-		p.endpointCache.Store(req.Endpoint, resp.Id)
-	}
-
-	logger.Infof("GMI Deploy: endpoint=%s, id=%s, SUCCESS", req.Endpoint, resp.Id)
-
+	logger.Infof("GMI Deploy: endpoint=%s, SUCCESS", req.Endpoint)
 	return &interfaces.DeployResponse{
 		Endpoint:  req.Endpoint,
-		Message:   "Successfully deployed via GMI API",
+		Message:   "Successfully deployed via BFF API",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}, nil
 }
 
 func (p *GMIDeploymentProvider) GetApp(ctx context.Context, endpoint string) (*interfaces.AppInfo, error) {
-	endpointID, err := p.getEndpointID(ctx, endpoint)
-	if err != nil {
+	var resp bffModelResponse
+	path := "/api/v1/models/" + endpoint
+	if err := p.doRequestBFF(ctx, "GET", path, nil, &resp); err != nil {
 		return nil, err
 	}
-
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s", p.baseURL, endpointID)
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp gmiEndpointResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	p.endpointCache.Store(resp.Name, resp.Id)
-	return convertToAppInfo(&resp), nil
+	return convertBFFModelToAppInfo(&resp), nil
 }
 
 func (p *GMIDeploymentProvider) ListApps(ctx context.Context) ([]*interfaces.AppInfo, error) {
-	url := p.baseURL + "/api/v1/endpoints"
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
+	var respList []bffModelResponse
+	if err := p.doRequestBFF(ctx, "GET", "/api/v1/models", nil, &respList); err != nil {
 		return nil, err
 	}
 
-	var respList []gmiEndpointResponse
-	if err := json.Unmarshal(body, &respList); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
 	apps := make([]*interfaces.AppInfo, len(respList))
-	for i, resp := range respList {
-		if resp.Id != "" && resp.Name != "" {
-			p.endpointCache.Store(resp.Name, resp.Id)
-		}
-		apps[i] = convertToAppInfo(&resp)
+	for i := range respList {
+		apps[i] = convertBFFModelToAppInfo(&respList[i])
 	}
-
 	return apps, nil
 }
 
 func (p *GMIDeploymentProvider) DeleteApp(ctx context.Context, endpoint string) error {
 	logger.Infof("GMI DeleteApp: endpoint=%s", endpoint)
 
-	endpointID, err := p.getEndpointID(ctx, endpoint)
-	if err != nil {
-		return err
+	path := "/api/v1/models/" + endpoint
+	if err := p.doRequestBFF(ctx, "DELETE", path, nil, nil); err != nil {
+		return fmt.Errorf("failed to delete via BFF API: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s", p.baseURL, endpointID)
-	_, err = p.doRequest(ctx, "DELETE", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to delete via GMI API: %w", err)
-	}
-
-	p.endpointCache.Delete(endpoint)
 	logger.Infof("GMI DeleteApp: endpoint=%s, SUCCESS", endpoint)
 	return nil
 }
@@ -225,22 +162,32 @@ func (p *GMIDeploymentProvider) DeleteApp(ctx context.Context, endpoint string) 
 func (p *GMIDeploymentProvider) ScaleApp(ctx context.Context, endpoint string, replicas int) error {
 	logger.Infof("GMI ScaleApp: endpoint=%s, target replicas=%d", endpoint, replicas)
 
-	endpointID, err := p.getEndpointID(ctx, endpoint)
+	// Drain-first: if scaling down, select and drain workers before reducing replicas
+	current, err := p.GetApp(ctx, endpoint)
 	if err != nil {
-		return err
+		logger.Warnf("GMI ScaleApp: failed to get current app info (skipping drain-first): %v", err)
+	}
+	if err == nil && current != nil && int(current.Replicas) > replicas {
+		excess := int(current.Replicas) - replicas
+		pods, podErr := p.GetPods(ctx, endpoint)
+		if podErr == nil && len(pods) > 0 {
+			toDrain := p.selectWorkersToDrain(pods, excess)
+			if len(toDrain) > 0 {
+				logger.Infof("GMI ScaleApp: drain-first: draining %d workers before scale-down", len(toDrain))
+				if drainErr := p.DrainWorkers(ctx, endpoint, toDrain); drainErr != nil {
+					logger.Warnf("GMI ScaleApp: drain before scale failed (continuing): %v", drainErr)
+				}
+			}
+		}
 	}
 
-	// Only send replicas fields, no template or env changes
-	gmiReq := &gmiEndpointRequest{
-		Replicas:   &replicas,
-		WorkersMin: &replicas,
-		WorkersMax: &replicas,
+	path := "/api/v1/models/" + endpoint + "/scale"
+	scaleReq := map[string]any{
+		"replicas": replicas,
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s", p.baseURL, endpointID)
-	_, err = p.doRequest(ctx, "PATCH", url, gmiReq)
-	if err != nil {
-		return fmt.Errorf("failed to scale via GMI API: %w", err)
+	if err := p.doRequestBFF(ctx, "POST", path, scaleReq, nil); err != nil {
+		return fmt.Errorf("failed to scale via BFF API: %w", err)
 	}
 
 	logger.Infof("GMI ScaleApp: endpoint=%s, replicas=%d, SUCCESS", endpoint, replicas)
@@ -263,78 +210,100 @@ func (p *GMIDeploymentProvider) GetAppStatus(ctx context.Context, endpoint strin
 }
 
 func (p *GMIDeploymentProvider) UpdateDeployment(ctx context.Context, req *interfaces.UpdateDeploymentRequest) (*interfaces.DeployResponse, error) {
-	logger.Infof("GMI UpdateDeployment: endpoint=%s, image=%s, replicas=%v, env=%v, shmSize=%v, taskTimeout=%v",
-		req.Endpoint, req.Image, req.Replicas, req.Env != nil, req.ShmSize, req.TaskTimeout)
+	logger.Infof("GMI UpdateDeployment: endpoint=%s, image=%s, replicas=%v, env=%v, shmSize=%v",
+		req.Endpoint, req.Image, req.Replicas, req.Env != nil, req.ShmSize)
 
-	endpointID, err := p.getEndpointID(ctx, req.Endpoint)
-	if err != nil {
-		return nil, err
-	}
-
-	gmiReq := &gmiEndpointRequest{}
-
-	if req.Replicas != nil {
-		gmiReq.Replicas = req.Replicas
-		gmiReq.WorkersMin = req.Replicas
-		gmiReq.WorkersMax = req.Replicas
-	}
-
-	// Only build and send template when template-related fields are being updated
-	needTemplate := req.Image != "" || req.Env != nil || (req.ShmSize != nil && *req.ShmSize != "")
-	if needTemplate {
-		template := &gmiTemplateData{}
-		if req.Image != "" {
-			template.ImageName = &req.Image
-		}
-		if req.ShmSize != nil && *req.ShmSize != "" {
-			template.ShmSize = req.ShmSize
-		}
-
-		// Build env: start with defaults, then merge existing user env vars, then apply new env
-		defaultEnv := p.buildDefaultEnv(req.Endpoint)
-		existingEnv := p.getExistingEnv(ctx, endpointID)
-
-		// Preserve existing non-default env vars (user-set vars from previous deploys)
-		if existingEnv != nil {
-			for k, v := range existingEnv {
-				if _, isDefault := defaultEnv[k]; !isDefault {
-					defaultEnv[k] = v
+	// Drain-first: if replicas are being reduced, drain excess workers first
+	if req.Replicas != nil && *req.Replicas > 0 {
+		current, err := p.GetApp(ctx, req.Endpoint)
+		if err == nil && current != nil && int(current.Replicas) > *req.Replicas {
+			excess := int(current.Replicas) - *req.Replicas
+			pods, podErr := p.GetPods(ctx, req.Endpoint)
+			if podErr == nil && len(pods) > 0 {
+				toDrain := p.selectWorkersToDrain(pods, excess)
+				if len(toDrain) > 0 {
+					logger.Infof("GMI UpdateDeployment: drain-first: draining %d workers before replica reduction", len(toDrain))
+					if drainErr := p.DrainWorkers(ctx, req.Endpoint, toDrain); drainErr != nil {
+						logger.Warnf("GMI UpdateDeployment: drain before update failed (continuing): %v", drainErr)
+					}
 				}
 			}
 		}
+	}
 
-		// If user explicitly provided new env, override with it
+	// ShmSize not supported by BFF PATCH API
+	if req.ShmSize != nil && *req.ShmSize != "" {
+		logger.Warnf("GMI UpdateDeployment: shmSize update not supported by BFF PATCH API, ignoring shmSize=%s", *req.ShmSize)
+	}
+
+	// Build BFF PATCH request — only include fields that are being updated
+	patch := map[string]any{}
+
+	if req.Replicas != nil {
+		patch["replicas"] = *req.Replicas
+	}
+	if req.Image != "" {
+		patch["image"] = req.Image
+	}
+
+	// Build env using three-layer merge: defaults → existing → caller
+	if req.Env != nil || req.Image != "" {
+		defaultEnv := p.buildDefaultEnv(req.Endpoint)
+		existingEnv := p.getExistingEnv(ctx, req.Endpoint)
+
+		// Preserve existing non-default env vars
+		for k, v := range existingEnv {
+			if _, isDefault := defaultEnv[k]; !isDefault {
+				defaultEnv[k] = v
+			}
+		}
+
+		// Apply caller env overrides
 		if req.Env != nil {
 			for k, v := range *req.Env {
 				defaultEnv[k] = v
 			}
 		}
 
-		template.Env = defaultEnv
-		gmiReq.Template = template
+		// Build envVars patch: use nil values to delete keys removed from merged set
+		envPatch := make(map[string]any, len(defaultEnv))
+		for k, v := range defaultEnv {
+			envPatch[k] = v
+		}
+		// Mark keys present in existing but absent from merged as nil (JSON null = delete)
+		for k := range existingEnv {
+			if _, ok := defaultEnv[k]; !ok {
+				envPatch[k] = nil
+			}
+		}
+		patch["envVars"] = envPatch
 	}
 
-	if req.TaskTimeout != nil && *req.TaskTimeout > 0 {
-		timeoutMs := int64(*req.TaskTimeout) * 1000
-		gmiReq.ExecutionTimeoutMs = &timeoutMs
+	// Pass registry credential update if provided
+	if req.RegistryCredential != nil {
+		patch["registryCredential"] = map[string]string{
+			"registry": req.RegistryCredential.Registry,
+			"username": req.RegistryCredential.Username,
+			"password": req.RegistryCredential.Password,
+		}
 	}
 
-	// Log the full request for debugging
-	if reqJSON, err := json.Marshal(gmiReq); err == nil {
-		logger.Infof("GMI UpdateDeployment: endpoint=%s, endpointID=%s, request=%s", req.Endpoint, endpointID, string(reqJSON))
+	if len(patch) == 0 {
+		return &interfaces.DeployResponse{
+			Endpoint: req.Endpoint,
+			Message:  "No fields to update",
+		}, nil
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s", p.baseURL, endpointID)
-	body, err := p.doRequest(ctx, "PATCH", url, gmiReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update via GMI API: %w", err)
+	path := "/api/v1/models/" + req.Endpoint
+	if err := p.doRequestBFF(ctx, "PATCH", path, patch, nil); err != nil {
+		return nil, fmt.Errorf("failed to update via BFF API: %w", err)
 	}
 
-	logger.Infof("GMI UpdateDeployment: endpoint=%s, SUCCESS, response=%s", req.Endpoint, string(body))
-
+	logger.Infof("GMI UpdateDeployment: endpoint=%s, SUCCESS", req.Endpoint)
 	return &interfaces.DeployResponse{
 		Endpoint:  req.Endpoint,
-		Message:   "Successfully updated via GMI API",
+		Message:   "Successfully updated via BFF API",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}, nil
 }
@@ -352,30 +321,22 @@ func (p *GMIDeploymentProvider) GetSpec(ctx context.Context, specName string) (*
 }
 
 // ========================================
-// LogProvider (optional)
+// LogProvider (optional) — BFF API
 // ========================================
 
 func (p *GMIDeploymentProvider) GetAppLogs(ctx context.Context, endpoint string, lines int, podName ...string) (string, error) {
-	endpointID, err := p.getEndpointID(ctx, endpoint)
-	if err != nil {
-		return "", err
+	if len(podName) == 0 || podName[0] == "" {
+		return "", fmt.Errorf("GMI provider: pod name is required for GetAppLogs via BFF")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s/logs?lines=%d", p.baseURL, endpointID, lines)
-	if len(podName) > 0 && podName[0] != "" {
-		url += "&pod_name=" + podName[0]
-	}
-
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return string(body), nil
+	// BFF returns SSE (text/event-stream) with log data.
+	// Parse SSE events to extract logs.
+	path := fmt.Sprintf("/api/v1/models/%s/workers/%s/logs?lines=%d", endpoint, podName[0], lines)
+	return p.doRequestSSELogs(ctx, "GET", p.baseURL+path)
 }
 
 // ========================================
-// PodProvider (optional)
+// PodProvider (optional) — BFF API
 // ========================================
 
 func (p *GMIDeploymentProvider) GetPods(ctx context.Context, endpoint string) ([]*interfaces.PodInfo, error) {
@@ -383,37 +344,21 @@ func (p *GMIDeploymentProvider) GetPods(ctx context.Context, endpoint string) ([
 		return p.getAllPods(ctx)
 	}
 
-	endpointID, err := p.getEndpointID(ctx, endpoint)
-	if err != nil {
+	// BFF GET /models/:name includes pods in the response
+	var resp bffModelResponse
+	path := "/api/v1/models/" + endpoint
+	if err := p.doRequestBFF(ctx, "GET", path, nil, &resp); err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s/workers", p.baseURL, endpointID)
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// gmiless may return workers as direct array or as part of endpoint response
-	var podList []gmiPodInfo
-	if err := json.Unmarshal(body, &podList); err != nil {
-		// Try parsing as endpoint response with workers
-		var endpointResp gmiEndpointResponse
-		if err2 := json.Unmarshal(body, &endpointResp); err2 == nil {
-			pods := make([]*interfaces.PodInfo, len(endpointResp.Workers))
-			for i, w := range endpointResp.Workers {
-				pods[i] = convertWorkerToPodInfo(&w, endpoint)
-			}
-			return pods, nil
+	pods := make([]*interfaces.PodInfo, len(resp.Pods))
+	for i := range resp.Pods {
+		pods[i] = convertBFFPodToPodInfo(&resp.Pods[i])
+		if pods[i].Labels == nil {
+			pods[i].Labels = make(map[string]string)
 		}
-		return nil, fmt.Errorf("failed to parse workers response: %w", err)
+		pods[i].Labels["app"] = endpoint
 	}
-
-	pods := make([]*interfaces.PodInfo, len(podList))
-	for i := range podList {
-		pods[i] = convertPodInfoFromGMI(&podList[i])
-	}
-
 	return pods, nil
 }
 
@@ -430,38 +375,30 @@ func (p *GMIDeploymentProvider) getAllPods(ctx context.Context) ([]*interfaces.P
 			logger.Warnf("GMI: failed to get pods for %s: %v", app.Name, err)
 			continue
 		}
-		for _, pod := range pods {
-			if pod.Labels == nil {
-				pod.Labels = make(map[string]string)
-			}
-			if pod.Labels["app"] == "" {
-				pod.Labels["app"] = app.Name
-			}
-		}
 		allPods = append(allPods, pods...)
 	}
-
 	return allPods, nil
 }
 
 func (p *GMIDeploymentProvider) DescribePod(ctx context.Context, endpoint string, podName string) (*interfaces.PodDetail, error) {
-	endpointID, err := p.getEndpointID(ctx, endpoint)
+	// BFF doesn't have a dedicated pod describe endpoint.
+	// Build a PodDetail from the pod info in GET /models/:name.
+	pods, err := p.GetPods(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s/workers/%s/describe", p.baseURL, endpointID, podName)
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	for _, pod := range pods {
+		if pod.Name == podName {
+			return &interfaces.PodDetail{
+				PodInfo:    pod,
+				Containers: []interfaces.ContainerInfo{},
+				Conditions: []interfaces.PodCondition{},
+				Events:     []interfaces.PodEvent{},
+			}, nil
+		}
 	}
-
-	var pod gmiPodInfo
-	if err := json.Unmarshal(body, &pod); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return convertPodDetailFromGMI(&pod), nil
+	return nil, fmt.Errorf("pod %s not found in endpoint %s", podName, endpoint)
 }
 
 func (p *GMIDeploymentProvider) GetPodYAML(ctx context.Context, endpoint string, podName string) (string, error) {
@@ -473,6 +410,23 @@ func (p *GMIDeploymentProvider) IsPodTerminating(ctx context.Context, podName st
 		return false, nil
 	}
 
+	// 1. Check local workerStates cache for DeletionTimestamp
+	if stateInterface, ok := p.workerStates.Load(podName); ok {
+		state := stateInterface.(*gmiWorkerState)
+		if state.DeletionTimestamp != "" {
+			return true, nil
+		}
+	}
+
+	// 2. Check Redis DrainingStore
+	if p.drainingStore != nil {
+		draining, err := p.drainingStore.IsDraining(ctx, gmiProviderName, podName)
+		if err == nil && draining {
+			return true, nil
+		}
+	}
+
+	// 3. Fall back to BFF API check
 	apps, err := p.ListApps(ctx)
 	if err != nil {
 		return false, nil
@@ -488,7 +442,7 @@ func (p *GMIDeploymentProvider) IsPodTerminating(ctx context.Context, podName st
 		}
 		for _, pod := range pods {
 			if pod.Name == podName {
-				return pod.DeletionTimestamp != "" || pod.Status == "Terminating", nil
+				return pod.DeletionTimestamp != "" || pod.Status == "Terminating" || pod.Status == "Draining", nil
 			}
 		}
 	}
@@ -543,19 +497,15 @@ func (p *GMIDeploymentProvider) buildDefaultEnv(endpoint string) map[string]stri
 	}
 }
 
-// getExistingEnv fetches the current env vars from the remote GMI endpoint.
-// Returns nil if the endpoint cannot be fetched (non-fatal).
-func (p *GMIDeploymentProvider) getExistingEnv(ctx context.Context, endpointID string) map[string]string {
-	url := fmt.Sprintf("%s/api/v1/endpoints/%s", p.baseURL, endpointID)
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
+// getExistingEnv fetches the current env vars from the BFF.
+// Returns nil if the model cannot be fetched (non-fatal).
+func (p *GMIDeploymentProvider) getExistingEnv(ctx context.Context, endpoint string) map[string]string {
+	var resp bffModelResponse
+	path := "/api/v1/models/" + endpoint
+	if err := p.doRequestBFF(ctx, "GET", path, nil, &resp); err != nil {
 		return nil
 	}
-	var resp gmiEndpointResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil
-	}
-	return resp.Env
+	return resp.EnvVars
 }
 
 // mergeEnv merges default env with user env. User-provided values take precedence.
@@ -586,8 +536,8 @@ func (p *GMIDeploymentProvider) PreviewDeploymentYAML(ctx context.Context, req *
 # Replicas: %d
 # GPU Count: %d
 #
-# This endpoint will be deployed via GMI (gmiless) API at:
-# %s/api/v1/endpoints
+# This endpoint will be deployed via BFF API at:
+# %s/api/v1/models
 `,
 		req.Endpoint, req.Image, req.Replicas, gpuCount, p.baseURL,
 	)
@@ -646,7 +596,7 @@ func (p *GMIDeploymentProvider) WatchReplicas(ctx context.Context, callback inte
 }
 
 // ========================================
-// Worker Status Sync (polling-based)
+// Worker Status Sync (polling-based via BFF)
 // ========================================
 
 // WatchPodStatusChange registers a callback for worker status changes.
@@ -732,106 +682,89 @@ func (p *GMIDeploymentProvider) runWorkerStatusWatcher(ctx context.Context) {
 	}
 }
 
-// pollWorkerStates polls gmiless for all endpoints and workers
+// pollWorkerStates polls BFF for all models and their pods.
+// BFF List response includes pods, so a single API call is sufficient.
 func (p *GMIDeploymentProvider) pollWorkerStates(ctx context.Context) {
-	url := p.baseURL + "/api/v1/endpoints"
-	body, err := p.doRequest(ctx, "GET", url, nil)
-	if err != nil {
-		logger.Warnf("GMI: failed to poll endpoints: %v", err)
-		return
-	}
-
-	var endpoints []gmiEndpointResponse
-	if err := json.Unmarshal(body, &endpoints); err != nil {
-		logger.Warnf("GMI: failed to parse endpoints response: %v", err)
+	var models []bffModelResponse
+	if err := p.doRequestBFF(ctx, "GET", "/api/v1/models", nil, &models); err != nil {
+		logger.Warnf("GMI: failed to poll models: %v", err)
 		return
 	}
 
 	currentWorkerIDs := make(map[string]bool)
-	totalWorkers := 0
+	totalPods := 0
 
-	for _, ep := range endpoints {
-		if ep.Id != "" && ep.Name != "" {
-			p.endpointCache.Store(ep.Name, ep.Id)
-		}
-
-		// The list endpoints API does not include workers inline,
-		// so we need to fetch workers separately for each endpoint.
-		workers := ep.Workers
-		if len(workers) == 0 && ep.Id != "" {
-			workersURL := p.baseURL + "/api/v1/endpoints/" + ep.Id + "/workers"
-			wBody, wErr := p.doRequest(ctx, "GET", workersURL, nil)
-			if wErr != nil {
-				logger.Warnf("GMI: failed to poll workers for endpoint %s: %v", ep.Name, wErr)
-			} else {
-				var fetchedWorkers []gmiWorkerResponse
-				if jErr := json.Unmarshal(wBody, &fetchedWorkers); jErr != nil {
-					logger.Warnf("GMI: failed to parse workers response for endpoint %s: %v", ep.Name, jErr)
-				} else {
-					workers = fetchedWorkers
-				}
-			}
-		}
-
-		totalWorkers += len(workers)
-		for i := range workers {
-			worker := &workers[i]
-			workerID := worker.Id
-			if workerID == "" {
-				workerID = worker.Name
-			}
+	for _, model := range models {
+		totalPods += len(model.Pods)
+		for i := range model.Pods {
+			pod := &model.Pods[i]
+			workerID := pod.PodName
 			currentWorkerIDs[workerID] = true
-			p.processWorkerStateChange(ep.Name, workerID, worker)
+			p.processPodStateChange(model.Name, workerID, pod)
 		}
 	}
 
-	if len(endpoints) > 0 || totalWorkers > 0 {
-		logger.Infof("GMI poll: found %d endpoints, %d workers", len(endpoints), totalWorkers)
+	if len(models) > 0 || totalPods > 0 {
+		logger.Infof("GMI poll: found %d models, %d pods", len(models), totalPods)
 	} else {
-		logger.Debugf("GMI poll: no endpoints or workers found")
+		logger.Debugf("GMI poll: no models or pods found")
 	}
 
 	p.detectDeletedWorkers(currentWorkerIDs)
 }
 
-// processWorkerStateChange detects worker state changes and triggers callbacks
-func (p *GMIDeploymentProvider) processWorkerStateChange(endpoint, workerID string, worker *gmiWorkerResponse) {
+// processPodStateChange detects pod state changes and triggers callbacks
+func (p *GMIDeploymentProvider) processPodStateChange(endpoint, workerID string, pod *bffPodStatus) {
 	prevInterface, exists := p.workerStates.Load(workerID)
 
-	podInfo := convertWorkerToPodInfo(worker, endpoint)
+	podInfo := convertBFFPodToPodInfo(pod)
+	podInfo.Labels = map[string]string{"app": endpoint}
 
 	currentState := &gmiWorkerState{
-		ID:        workerID,
-		Endpoint:  endpoint,
-		Status:    worker.DesiredStatus,
-		CreatedAt: worker.LastStartedAt,
-		StartedAt: worker.LastStartedAt,
+		ID:                workerID,
+		Endpoint:          endpoint,
+		Status:            pod.Phase,
+		CreatedAt:         pod.CreatedAt,
+		StartedAt:         pod.StartedAt,
+		ReadyAt:           pod.ReadyAt,
+		DeletionTimestamp: pod.DeletionTimestamp,
+		Reason:            pod.Reason,
+		Message:           pod.Message,
+		RestartCount:      pod.RestartCount,
 	}
 
 	if !exists {
 		p.workerStates.Store(workerID, currentState)
-		logger.Infof("GMI: new worker detected: %s (endpoint: %s, status: %s)", workerID, endpoint, worker.DesiredStatus)
+		logger.Infof("GMI: new pod detected: %s (endpoint: %s, phase: %s)", workerID, endpoint, pod.Phase)
 		p.notifyWorkerStatusChange(workerID, endpoint, podInfo)
 		return
 	}
 
 	prev := prevInterface.(*gmiWorkerState)
-	if prev.Status != currentState.Status {
+	if prev.Status != currentState.Status || prev.DeletionTimestamp != currentState.DeletionTimestamp {
 		p.workerStates.Store(workerID, currentState)
-		logger.Infof("GMI: worker state changed: %s (endpoint: %s, %s -> %s)", workerID, endpoint, prev.Status, currentState.Status)
+		logger.Infof("GMI: pod state changed: %s (endpoint: %s, %s -> %s, deletion: %s -> %s)",
+			workerID, endpoint, prev.Status, currentState.Status, prev.DeletionTimestamp, currentState.DeletionTimestamp)
 		p.notifyWorkerStatusChange(workerID, endpoint, podInfo)
 	}
 }
 
 // detectDeletedWorkers finds workers that disappeared and triggers delete callbacks
 func (p *GMIDeploymentProvider) detectDeletedWorkers(currentWorkerIDs map[string]bool) {
-	p.workerStates.Range(func(key, value interface{}) bool {
+	p.workerStates.Range(func(key, value any) bool {
 		workerID := key.(string)
 		if !currentWorkerIDs[workerID] {
 			state := value.(*gmiWorkerState)
 			logger.Infof("GMI: worker deleted: %s (endpoint: %s)", workerID, state.Endpoint)
 			p.workerStates.Delete(workerID)
-			p.notifyWorkerDelete(workerID, state.Endpoint)
+
+			var deletedAt *time.Time
+			if state.DeletionTimestamp != "" {
+				if t, err := time.Parse(time.RFC3339, state.DeletionTimestamp); err == nil {
+					deletedAt = &t
+				}
+			}
+			p.notifyWorkerDelete(workerID, state.Endpoint, deletedAt)
 		}
 		return true
 	})
@@ -843,7 +776,6 @@ func (p *GMIDeploymentProvider) notifyWorkerStatusChange(workerID, endpoint stri
 	defer p.workerStatusCallbacksLock.RUnlock()
 
 	for _, cb := range p.workerStatusCallbacks {
-		cb := cb
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -856,19 +788,18 @@ func (p *GMIDeploymentProvider) notifyWorkerStatusChange(workerID, endpoint stri
 }
 
 // notifyWorkerDelete triggers all registered delete callbacks
-func (p *GMIDeploymentProvider) notifyWorkerDelete(workerID, endpoint string) {
+func (p *GMIDeploymentProvider) notifyWorkerDelete(workerID, endpoint string, deletedAt *time.Time) {
 	p.workerDeleteCallbacksLock.RLock()
 	defer p.workerDeleteCallbacksLock.RUnlock()
 
 	for _, cb := range p.workerDeleteCallbacks {
-		cb := cb
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
 					logger.Errorf("GMI: panic in worker delete callback: %v", r)
 				}
 			}()
-			cb(workerID, endpoint)
+			cb(workerID, endpoint, deletedAt)
 		}()
 	}
 }
@@ -876,4 +807,135 @@ func (p *GMIDeploymentProvider) notifyWorkerDelete(workerID, endpoint string) {
 // GetLifecycle returns the GMI lifecycle manager
 func (p *GMIDeploymentProvider) GetLifecycle() *GMIProviderLifecycle {
 	return NewGMIProviderLifecycle(p)
+}
+
+// ========================================
+// Drain + DrainingStore (Novita parity)
+// ========================================
+
+// gmiProviderName is used as the provider identifier in draining store
+const gmiProviderName = "gmi"
+
+// SetRedisClient sets the Redis client for draining workers tracking
+func (p *GMIDeploymentProvider) SetRedisClient(client *redis.Client) {
+	p.redisClient = client
+	if client != nil {
+		p.drainingStore = redisstore.NewDrainingStore(client)
+		logger.Infof("GMI: Redis draining store initialized")
+	}
+}
+
+// DrainWorkers drains specified workers via BFF drain API and marks them in Redis
+func (p *GMIDeploymentProvider) DrainWorkers(ctx context.Context, endpoint string, workerIDs []string) error {
+	if len(workerIDs) == 0 {
+		return nil
+	}
+
+	logger.Infof("GMI DrainWorkers: endpoint=%s, workers=%v", endpoint, workerIDs)
+
+	// 1. Call BFF POST /models/:name/drain
+	path := "/api/v1/models/" + endpoint + "/drain"
+	if err := p.doRequestBFF(ctx, "POST", path, map[string]any{"workerIds": workerIDs}, nil); err != nil {
+		return fmt.Errorf("failed to drain workers via BFF API: %w", err)
+	}
+
+	// 2. Mark each worker as draining in Redis
+	for _, wid := range workerIDs {
+		if err := p.MarkWorkerDraining(ctx, wid); err != nil {
+			logger.Warnf("GMI DrainWorkers: failed to mark worker %s as draining in Redis: %v", wid, err)
+		}
+	}
+
+	logger.Infof("GMI DrainWorkers: endpoint=%s, drained %d workers", endpoint, len(workerIDs))
+	return nil
+}
+
+// TerminateWorker terminates a specific worker by draining it.
+// Implements interfaces.WorkerTerminator.
+func (p *GMIDeploymentProvider) TerminateWorker(ctx context.Context, endpoint, workerID, reason string) error {
+	logger.Infof("GMI TerminateWorker: endpoint=%s, worker=%s, reason=%s", endpoint, workerID, reason)
+	return p.DrainWorkers(ctx, endpoint, []string{workerID})
+}
+
+// selectWorkersToDrain selects workers to drain for scale-down.
+// Priority: skip already-terminating → non-Ready → non-Running → healthy Running.
+func (p *GMIDeploymentProvider) selectWorkersToDrain(pods []*interfaces.PodInfo, count int) []string {
+	if count <= 0 || len(pods) == 0 {
+		return nil
+	}
+
+	// Filter out already-terminating pods
+	type candidate struct {
+		name    string
+		ready   bool
+		running bool
+	}
+	var candidates []candidate
+	for _, pod := range pods {
+		if pod.DeletionTimestamp != "" || pod.Status == "Terminating" || pod.Status == "Draining" {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			name:    pod.Name,
+			ready:   pod.Phase == "Running" && pod.Status == "Running",
+			running: pod.Phase == "Running",
+		})
+	}
+
+	if count >= len(candidates) {
+		result := make([]string, len(candidates))
+		for i, c := range candidates {
+			result[i] = c.name
+		}
+		return result
+	}
+
+	// Separate into priority categories
+	var nonReady, notRunning, healthyRunning []string
+	for _, c := range candidates {
+		if !c.ready {
+			nonReady = append(nonReady, c.name)
+		} else if !c.running {
+			notRunning = append(notRunning, c.name)
+		} else {
+			healthyRunning = append(healthyRunning, c.name)
+		}
+	}
+
+	// Select in priority order
+	selected := make([]string, 0, count)
+	for _, group := range [][]string{nonReady, notRunning, healthyRunning} {
+		for _, name := range group {
+			if len(selected) >= count {
+				return selected
+			}
+			selected = append(selected, name)
+		}
+	}
+	return selected
+}
+
+// MarkWorkerDraining marks a worker as draining in Redis with TTL
+func (p *GMIDeploymentProvider) MarkWorkerDraining(ctx context.Context, workerID string) error {
+	if p.drainingStore == nil {
+		logger.Warnf("GMI: Redis not configured, cannot mark worker %s as draining", workerID)
+		return nil
+	}
+	return p.drainingStore.MarkDraining(ctx, gmiProviderName, workerID)
+}
+
+// ClearDrainingWorker removes a worker from the draining list in Redis
+func (p *GMIDeploymentProvider) ClearDrainingWorker(ctx context.Context, workerID string) error {
+	if p.drainingStore == nil {
+		return nil
+	}
+	return p.drainingStore.ClearDraining(ctx, gmiProviderName, workerID)
+}
+
+// GetDrainingWorkers returns currently draining worker IDs from Redis
+func (p *GMIDeploymentProvider) GetDrainingWorkers(ctx context.Context) []string {
+	if p.drainingStore == nil {
+		return nil
+	}
+	return p.drainingStore.GetDrainingWorkers(ctx, gmiProviderName)
 }

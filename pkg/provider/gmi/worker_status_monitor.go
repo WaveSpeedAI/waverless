@@ -44,6 +44,13 @@ func NewGMIWorkerStatusMonitor(workerRepo *mysql.WorkerRepository) *GMIWorkerSta
 
 // DetectFailure detects if a worker is in a failed state from PodInfo.
 // Returns nil if the worker is not in a failed state.
+//
+// IMPORTANT: This must NOT flag normal pod transition states (Pending,
+// ContainerCreating, PodInitializing, Scheduled, etc.) as failures.
+// ieops-v2 IEBE-1481 introduced precise pod reason reporting, so the
+// previous "any non-empty reason that isn't 'ready'" check now matches
+// every healthy pod during startup and writes a UNKNOWN failure record
+// that the dashboard never clears.
 func (m *GMIWorkerStatusMonitor) DetectFailure(info *interfaces.PodInfo) *interfaces.WorkerFailureInfo {
 	if info == nil {
 		return nil
@@ -54,21 +61,44 @@ func (m *GMIWorkerStatusMonitor) DetectFailure(info *interfaces.PodInfo) *interf
 	reasonLower := strings.ToLower(info.Reason)
 	messageLower := strings.ToLower(info.Message)
 
-	// Check for failure indicators
-	isFailed := phaseLower == "failed" || phaseLower == "error" ||
-		statusLower == "failed" || statusLower == "error" ||
-		strings.Contains(phaseLower, "fail") ||
-		strings.Contains(statusLower, "fail") ||
-		(reasonLower != "" && reasonLower != "ready") ||
-		strings.Contains(messageLower, "error") ||
-		strings.Contains(messageLower, "fail")
-
-	if !isFailed {
-		return nil
+	// Explicit failure phases / statuses
+	if phaseLower == "failed" || phaseLower == "error" || statusLower == "failed" || statusLower == "error" {
+		failureType := m.classifyFailure(info.Phase, info.Status, info.Reason, info.Message)
+		return m.createFailureInfo(failureType, info.Phase, info.Reason, info.Message)
 	}
 
-	failureType := m.classifyFailure(info.Phase, info.Status, info.Reason, info.Message)
-	return m.createFailureInfo(failureType, info.Phase, info.Reason, info.Message)
+	// Explicit failure reasons (K8s container/pod failure reasons reported by Agent)
+	failureReasons := map[string]bool{
+		"crashloopbackoff":       true,
+		"imagepullbackoff":       true,
+		"errimagepull":           true,
+		"errimageneverpull":      true,
+		"invalidimagename":       true,
+		"createcontainererror":   true,
+		"runcontainererror":      true,
+		"oomkilled":               true,
+		"dispatchfailed":         true,
+		"failedcreatepodsandbox": true,
+		"unschedulable":          true,
+		"podfailed":              true,
+		"providerfailed":         true,
+	}
+	if failureReasons[reasonLower] {
+		failureType := m.classifyFailure(info.Phase, info.Status, info.Reason, info.Message)
+		return m.createFailureInfo(failureType, info.Phase, info.Reason, info.Message)
+	}
+
+	// Failure indicators in message — only explicit failure phrasing,
+	// not generic substrings like "error" which match normal logs.
+	if strings.Contains(messageLower, "back-off") ||
+		strings.Contains(messageLower, "oomkilled") ||
+		strings.Contains(messageLower, "failed to pull") ||
+		strings.Contains(messageLower, "image pull failed") {
+		failureType := m.classifyFailure(info.Phase, info.Status, info.Reason, info.Message)
+		return m.createFailureInfo(failureType, info.Phase, info.Reason, info.Message)
+	}
+
+	return nil
 }
 
 // classifyFailure converts GMI worker status to generic FailureType.

@@ -1,137 +1,63 @@
 package gmi
 
-import "waverless/pkg/interfaces"
+import (
+	"encoding/json"
+	"time"
+
+	"waverless/pkg/interfaces"
+)
 
 // ========================================
-// Request types - matches gmiless interfaces.EndpointRequest
+// BFF response types — ieops-v2 BFF API
 // ========================================
 
-// gmiEndpointRequest matches gmiless interfaces.EndpointRequest
-type gmiEndpointRequest struct {
-	// Core
-	Name     *string `json:"name,omitempty"`
-	Replicas *int    `json:"replicas,omitempty"`
-
-	// Hardware
-	ComputeType *string   `json:"computeType,omitempty"` // GPU, CPU
-	GpuCount    *int      `json:"gpuCount,omitempty"`
-	GpuTypeIds  *[]string `json:"gpuTypeIds,omitempty"`
-	VcpuCount   *int      `json:"vcpuCount,omitempty"`
-
-	// Template
-	Template   *gmiTemplateData `json:"template,omitempty"`
-	TemplateId *string          `json:"templateId,omitempty"`
-
-	// Networking / Storage
-	DataCenterIds   *[]string `json:"dataCenterIds,omitempty"`
-	NetworkVolumeId *string   `json:"networkVolumeId,omitempty"`
-
-	// Endpoint type
-	Type                 *string `json:"type,omitempty"` // LB, QB
-	UseContainerResource *bool   `json:"useContainerResource,omitempty"`
-
-	// Autoscaling
-	ExecutionTimeoutMs *int64  `json:"executionTimeoutMs,omitempty"`
-	IdleTimeout        *int    `json:"idleTimeout,omitempty"`
-	WorkersMin         *int    `json:"workersMin,omitempty"`
-	WorkersMax         *int    `json:"workersMax,omitempty"`
-	ScalerType         *string `json:"scalerType,omitempty"`
-	ScalerValue        *int    `json:"scalerValue,omitempty"`
-	ScaleDownIdleTime  *int    `json:"scaleDownIdleTime,omitempty"`
-	ScaleUpCooldown    *int    `json:"scaleUpCooldown,omitempty"`
-	ScaleDownCooldown  *int    `json:"scaleDownCooldown,omitempty"`
+// bffResponse is the envelope for all BFF responses: {"msg":"success","data":{...}}
+type bffResponse struct {
+	Msg  string          `json:"msg"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// gmiTemplateData matches gmiless interfaces.TemplateData
-type gmiTemplateData struct {
-	ImageName        *string           `json:"imageName,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	DockerEntrypoint []string          `json:"dockerEntrypoint,omitempty"`
-	DockerStartCmd   []string          `json:"dockerStartCmd,omitempty"`
-	Ports            []string          `json:"ports,omitempty"`
-	ShmSize          *string           `json:"shmSize,omitempty"`
-	VolumeMountPath  *string           `json:"volumeMountPath,omitempty"`
+// bffModelResponse represents a model from BFF GET /models and GET /models/:name
+type bffModelResponse struct {
+	Name              string            `json:"name"`
+	Model             string            `json:"model"`
+	Status            string            `json:"status"` // ModelDeployment Phase: Running, Deploying, Failed, etc.
+	Image             string            `json:"image"`
+	DesiredReplicas   int32             `json:"desired_replicas"`
+	CurrentReplicas   int32             `json:"current_replicas"`
+	ReadyReplicas     int32             `json:"ready_replicas"`
+	AvailableReplicas int32             `json:"available_replicas"`
+	CreatedAt         string            `json:"created_at"`
+	Regions           []string          `json:"regions"`
+	Clusters          []string          `json:"clusters"`
+	// Detail-only fields (from GET /models/:name):
+	Pods         []bffPodStatus    `json:"pods,omitempty"`
+	EnvVars      map[string]string `json:"envVars,omitempty"`
+	Command      []string          `json:"command,omitempty"`
+	ShmSize      string            `json:"shmSize,omitempty"`
+	VolumeMounts []bffVolumeMount  `json:"volumeMounts,omitempty"`
 }
 
-// ========================================
-// Response types - from gmiless API
-// ========================================
-
-// gmiEndpointResponse is the response from gmiless endpoint APIs
-type gmiEndpointResponse struct {
-	Id         string              `json:"id"`
-	Name       string              `json:"name"`
-	Image      string              `json:"image"`
-	Replicas   int                 `json:"replicas"`
-	Status     string              `json:"status"`
-	GpuCount   int                 `json:"gpuCount"`
-	GpuTypeIds []string            `json:"gpuTypeIds"`
-	CreatedAt  string              `json:"createdAt"`
-	Env        map[string]string   `json:"env"`
-	Workers    []gmiWorkerResponse `json:"workers"`
-	WorkersMin int                 `json:"workersMin"`
-	WorkersMax int                 `json:"workersMax"`
-	Template   *gmiTemplateResp    `json:"template,omitempty"`
-	AccessURL  string              `json:"accessUrl,omitempty"`
+// bffPodStatus represents a pod from BFF, sourced from CRD PodStatus + placement data
+type bffPodStatus struct {
+	PodName           string `json:"pod_name"`
+	NodeID            string `json:"node_id"`
+	ClusterID         string `json:"cluster_id"`
+	Phase             string `json:"phase"`
+	Ready             bool   `json:"ready"`
+	CreatedAt         string `json:"created_at"`
+	StartedAt         string `json:"started_at"`
+	ReadyAt           string `json:"ready_at"`
+	DeletionTimestamp string `json:"deletion_timestamp"`
+	Reason            string `json:"reason"`
+	Message           string `json:"message"`
+	RestartCount      int32  `json:"restart_count"`
 }
 
-type gmiTemplateResp struct {
-	ImageName string `json:"imageName,omitempty"`
-}
-
-type gmiWorkerResponse struct {
-	Id            string `json:"id"`
-	Name          string `json:"name"`
-	Image         string `json:"image"`
-	DesiredStatus string `json:"desiredStatus"`
-	LastStartedAt string `json:"lastStartedAt,omitempty"`
-}
-
-// gmiPodInfo represents pod data returned by gmiless /workers and /describe
-type gmiPodInfo struct {
-	Name         string            `json:"name"`
-	Namespace    string            `json:"namespace"`
-	UID          string            `json:"uid"`
-	Phase        string            `json:"phase"`
-	Status       string            `json:"status"`
-	Reason       string            `json:"reason"`
-	Message      string            `json:"message"`
-	IP           string            `json:"ip"`
-	NodeName     string            `json:"nodeName"`
-	CreatedAt    string            `json:"createdAt"`
-	StartedAt    string            `json:"startedAt"`
-	Labels       map[string]string `json:"labels"`
-	Annotations  map[string]string `json:"annotations"`
-	RestartCount int               `json:"restartCount"`
-	Ready        bool              `json:"ready"`
-	Containers   []struct {
-		Name  string `json:"name"`
-		Image string `json:"image"`
-		Env   []struct {
-			Name      string `json:"name"`
-			Value     string `json:"value,omitempty"`
-			ValueFrom *struct {
-				FieldRef *struct {
-					FieldPath string `json:"fieldPath"`
-				} `json:"fieldRef,omitempty"`
-			} `json:"valueFrom,omitempty"`
-		} `json:"env"`
-		Ready     bool `json:"ready"`
-		Resources struct {
-			Limits   map[string]string `json:"limits"`
-			Requests map[string]string `json:"requests"`
-		} `json:"resources"`
-	} `json:"containers"`
-	Conditions []struct {
-		Type               string `json:"type"`
-		Status             string `json:"status"`
-		LastTransitionTime string `json:"lastTransitionTime"`
-	} `json:"conditions"`
-	Volumes []struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	} `json:"volumes"`
-	DeletionTimestamp string `json:"deletionTimestamp,omitempty"`
+// bffVolumeMount represents a volume mount from BFF
+type bffVolumeMount struct {
+	PVCName   string `json:"pvcName"`
+	MountPath string `json:"mountPath"`
 }
 
 // ========================================
@@ -142,13 +68,18 @@ type gmiPodInfo struct {
 type WorkerStatusChangeCallback func(workerID, endpoint string, info *interfaces.PodInfo)
 
 // WorkerDeleteCallback is called when a worker is deleted
-type WorkerDeleteCallback func(workerID, endpoint string)
+type WorkerDeleteCallback func(workerID, endpoint string, deletedAt *time.Time)
 
-// gmiWorkerState tracks a worker's last known state
+// gmiWorkerState tracks a worker's last known state (used by polling watcher)
 type gmiWorkerState struct {
-	ID        string
-	Endpoint  string
-	Status    string
-	CreatedAt string
-	StartedAt string
+	ID                string
+	Endpoint          string
+	Status            string
+	CreatedAt         string
+	StartedAt         string
+	ReadyAt           string
+	DeletionTimestamp string // Set when pod is being drained/terminated
+	Reason            string
+	Message           string
+	RestartCount      int32
 }

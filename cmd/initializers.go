@@ -210,6 +210,11 @@ func (app *Application) initServices() error {
 	if app.config.GMI.Enabled {
 		if gmiProv, ok := app.deploymentProvider.(*gmi.GMIDeploymentProvider); ok {
 			gmiDeployProvider = gmiProv
+			// Inject Redis client for draining workers tracking (multi-replica safe)
+			if app.redisClient != nil {
+				gmiDeployProvider.SetRedisClient(app.redisClient.GetClient())
+				logger.InfoCtx(app.ctx, "Redis client injected into GMI provider - draining workers will be tracked in Redis")
+			}
 		}
 	}
 

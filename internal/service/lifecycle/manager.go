@@ -305,10 +305,18 @@ func (m *Manager) createGMICallbacks() *gmi.GMILifecycleCallbacks {
 				PodInfo:  podInfo,
 			})
 		},
-		OnWorkerDelete: func(workerID, endpoint string) {
+		OnWorkerDelete: func(workerID, endpoint string, deletedAt *time.Time) {
 			m.callbackHandler.HandleWorkerDelete(&provider.WorkerDeleteEvent{
+				WorkerID:  workerID,
+				Endpoint:  endpoint,
+				DeletedAt: deletedAt,
+			})
+		},
+		OnWorkerDraining: func(workerID, endpoint, reason string) {
+			m.callbackHandler.HandleWorkerDraining(&provider.WorkerDrainingEvent{
 				WorkerID: workerID,
 				Endpoint: endpoint,
+				Reason:   reason,
 			})
 		},
 		OnWorkerFailure: func(workerID, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
