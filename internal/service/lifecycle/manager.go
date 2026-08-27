@@ -11,6 +11,7 @@ import (
 	"waverless/pkg/interfaces"
 	"waverless/pkg/logger"
 	"waverless/pkg/provider"
+	"waverless/pkg/provider/gmi"
 	"waverless/pkg/provider/k8s"
 	"waverless/pkg/provider/novita"
 	"waverless/pkg/status"
@@ -151,6 +152,38 @@ func (m *Manager) RegisterNovitaProvider(provider *novita.NovitaDeploymentProvid
 	return nil
 }
 
+// RegisterGMIProvider registers GMI Provider and starts its watchers
+func (m *Manager) RegisterGMIProvider(provider *gmi.GMIDeploymentProvider) error {
+	if provider == nil {
+		return fmt.Errorf("gmi provider is nil")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	name := "gmi"
+	if _, exists := m.providers[name]; exists {
+		logger.WarnCtx(m.ctx, "Provider %s already registered, skipping", name)
+		return nil
+	}
+
+	lifecycle := provider.GetLifecycle()
+	if lifecycle == nil {
+		return fmt.Errorf("gmi provider lifecycle is nil")
+	}
+
+	callbacks := m.createGMICallbacks()
+
+	if err := lifecycle.RegisterWatchers(callbacks); err != nil {
+		return fmt.Errorf("failed to register watchers for gmi provider: %w", err)
+	}
+
+	m.providers[name] = lifecycle
+	logger.InfoCtx(m.ctx, "GMI Provider registered successfully")
+
+	return nil
+}
+
 // createK8sCallbacks creates K8s callback functions
 func (m *Manager) createK8sCallbacks(k8sProvider *k8s.K8sDeploymentProvider) *k8s.K8sLifecycleCallbacks {
 	return &k8s.K8sLifecycleCallbacks{
@@ -222,6 +255,49 @@ func (m *Manager) createK8sCallbacks(k8sProvider *k8s.K8sDeploymentProvider) *k8
 // createNovitaCallbacks creates Novita callback functions
 func (m *Manager) createNovitaCallbacks() *novita.NovitaLifecycleCallbacks {
 	return &novita.NovitaLifecycleCallbacks{
+		OnWorkerStatusChange: func(workerID, endpoint string, podInfo *interfaces.PodInfo) {
+			m.callbackHandler.HandleWorkerStatusChange(&provider.WorkerStatusEvent{
+				WorkerID: workerID,
+				Endpoint: endpoint,
+				PodInfo:  podInfo,
+			})
+		},
+		OnWorkerDelete: func(workerID, endpoint string, deletedAt *time.Time) {
+			m.callbackHandler.HandleWorkerDelete(&provider.WorkerDeleteEvent{
+				WorkerID:  workerID,
+				Endpoint:  endpoint,
+				DeletedAt: deletedAt,
+			})
+		},
+		OnWorkerDraining: func(workerID, endpoint, reason string) {
+			m.callbackHandler.HandleWorkerDraining(&provider.WorkerDrainingEvent{
+				WorkerID: workerID,
+				Endpoint: endpoint,
+				Reason:   reason,
+			})
+		},
+		OnWorkerFailure: func(workerID, endpoint string, failureInfo *interfaces.WorkerFailureInfo) {
+			m.callbackHandler.HandleWorkerFailure(&provider.WorkerFailureEvent{
+				WorkerID:    workerID,
+				Endpoint:    endpoint,
+				FailureInfo: failureInfo,
+			})
+		},
+		OnEndpointStatusChange: func(endpoint, status string, desiredReplicas, readyReplicas, availableReplicas int) {
+			m.callbackHandler.HandleEndpointStatusChange(&provider.EndpointStatusEvent{
+				Endpoint:          endpoint,
+				Status:            status,
+				DesiredReplicas:   desiredReplicas,
+				ReadyReplicas:     readyReplicas,
+				AvailableReplicas: availableReplicas,
+			})
+		},
+	}
+}
+
+// createGMICallbacks creates GMI callback functions
+func (m *Manager) createGMICallbacks() *gmi.GMILifecycleCallbacks {
+	return &gmi.GMILifecycleCallbacks{
 		OnWorkerStatusChange: func(workerID, endpoint string, podInfo *interfaces.PodInfo) {
 			m.callbackHandler.HandleWorkerStatusChange(&provider.WorkerStatusEvent{
 				WorkerID: workerID,

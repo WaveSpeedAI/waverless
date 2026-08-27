@@ -78,7 +78,7 @@ func (r *WorkerRepository) UpdateHeartbeat(ctx context.Context, workerID, endpoi
 
 // UpsertFromPod creates or updates worker from pod watch events (status STARTING until heartbeat)
 // readyAt is optional - if provided (e.g. from Novita API), it will be used instead of time.Now()
-func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt *time.Time) error {
+func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint, phase, status, reason, message, ip, nodeName string, createdAt, startedAt, readyAt, deletionTimestamp *time.Time) error {
 	now := time.Now()
 
 	logger.InfoCtx(ctx, "UpsertFromPod: pod_name=%s, endpoint=%s, phase=%s, status=%s, reason=%s", podName, endpoint, phase, status, reason)
@@ -99,6 +99,9 @@ func (r *WorkerRepository) UpsertFromPod(ctx context.Context, podName, endpoint,
 	}
 	if readyAt != nil {
 		runtimeState["readyAt"] = readyAt.Format(time.RFC3339)
+	}
+	if deletionTimestamp != nil {
+		runtimeState["deletionTimestamp"] = deletionTimestamp.Format(time.RFC3339)
 	}
 
 	updates := map[string]interface{}{

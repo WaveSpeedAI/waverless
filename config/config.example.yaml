@@ -95,3 +95,12 @@ novita:
   base_url: "https://api.novita.ai"  # Novita API base URL
   config_dir: "./config"  # Configuration directory (contains specs.yaml and templates/)
   poll_interval: 10  # Poll interval for status updates (seconds, default: 10)
+
+# GMI Serverless Configuration (v2 API)
+gmi:
+  enabled: false  # Enable GMI serverless provider
+  api_key: ""     # BFF auth token (Bearer token)
+  base_url: ""    # BFF API base URL
+  callback_url: "http://waverless-svc"  # External URL of waverless server for worker callbacks
+  config_dir: "./config"  # Configuration directory (contains specs.yaml and templates/)
+  poll_interval: 10  # Poll interval for status updates (seconds, default: 10)

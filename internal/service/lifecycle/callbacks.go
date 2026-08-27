@@ -118,7 +118,7 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	info := event.PodInfo
 
 	// Parse timestamps
-	var createdAt, startedAt, readyAt *time.Time
+	var createdAt, startedAt, readyAt, deletionTimestamp *time.Time
 	if info.CreatedAt != "" {
 		if t, err := time.Parse(time.RFC3339, info.CreatedAt); err == nil {
 			createdAt = &t
@@ -132,6 +132,11 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	if info.ReadyAt != "" {
 		if t, err := time.Parse(time.RFC3339, info.ReadyAt); err == nil {
 			readyAt = &t
+		}
+	}
+	if info.DeletionTimestamp != "" {
+		if t, err := time.Parse(time.RFC3339, info.DeletionTimestamp); err == nil {
+			deletionTimestamp = &t
 		}
 	}
 
@@ -148,7 +153,7 @@ func (h *CallbackHandler) HandleWorkerStatusChange(event *provider.WorkerStatusE
 	isNewWorker := existingWorker == nil
 
 	// Create or update Worker
-	if err := h.workerRepo.UpsertFromPod(h.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt, readyAt); err != nil {
+	if err := h.workerRepo.UpsertFromPod(h.ctx, podName, endpoint, info.Phase, info.Status, info.Reason, info.Message, info.IP, info.NodeName, createdAt, startedAt, readyAt, deletionTimestamp); err != nil {
 		logger.WarnCtx(h.ctx, "Failed to upsert worker from pod %s: %v", podName, err)
 		return
 	}
